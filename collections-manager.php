@@ -6,7 +6,7 @@
  * Author URI: https://bemistech.com
  * License: GPLv2 or later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
- * Version: 0.2.3
+ * Version: 0.2.10
  * Text Domain: collections-manager
  * Update URI: https://updates.bemistech.com/collections-manager.json
  *
@@ -17,7 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'COLLECTIONS_MANAGER_VERSION', '0.2.3' );
+define( 'COLLECTIONS_MANAGER_VERSION', '0.2.10' );
 define( 'COLLECTIONS_MANAGER_FILE', __FILE__ );
 define( 'COLLECTIONS_MANAGER_PATH', plugin_dir_path( __FILE__ ) );
 define( 'COLLECTIONS_MANAGER_URL', plugin_dir_url( __FILE__ ) );
@@ -27,6 +27,7 @@ define( 'COLLECTIONS_MANAGER_SOURCE_META', '_cm_source' );
 define( 'COLLECTIONS_MANAGER_QUERY_META', '_cm_query' );
 define( 'COLLECTIONS_MANAGER_YOUTUBE_META', '_cm_youtube' );
 define( 'COLLECTIONS_MANAGER_FEED_META', '_cm_feed' );
+define( 'COLLECTIONS_MANAGER_PLACEMENT', 'collection_placement' );
 
 require_once COLLECTIONS_MANAGER_PATH . 'includes/Autoloader.php';
 CollectionsManager\Autoloader::register();
@@ -35,6 +36,9 @@ CollectionsManager\Admin\SettingsPage::register();
 CollectionsManager\Updates\Checker::register();
 CollectionsManager\Updates\License::register();
 CollectionsManager\Rest\Picker::register();
+CollectionsManager\Placements::register();
+CollectionsManager\PlacementUsage::register();
+CollectionsManager\Rest\Placements::register();
 
 require_once COLLECTIONS_MANAGER_PATH . 'includes/helpers.php';
 require_once COLLECTIONS_MANAGER_PATH . 'includes/styles.php';

@@ -27,6 +27,10 @@
 	top: 46px;
 }
 
+.cm-styles .cm-dash-card > h2:first-child {
+	margin-top: 0;
+}
+
 .cm-styles__preview .cm-browser {
 	color: #1d2327;
 	background: #fff;

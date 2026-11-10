@@ -2,6 +2,14 @@
 	var config = window.collectionsManagerDashboard || {};
 	var frame;
 	var searchTimer;
+	var queryTermTimer;
+	var taxFilters = {};
+	var termCatalog = {};
+	var browseToken = 0;
+	var browsePage = 1;
+	var previewToken = 0;
+	var queryTermToken = 0;
+	var addMatchKey = '';
 
 	function selectedIds() {
 		return $( '#cm-selected-posts li' )
@@ -16,20 +24,24 @@
 			return;
 		}
 
-		var $item = $(
-			'<li data-id="' +
-				post.id +
-				'">' +
-				'<input type="hidden" name="collection[post_ids][]" value="' +
-				post.id +
-				'" />' +
-				'<span class="cm-selected-posts__title"></span>' +
-				'<button type="button" class="button-link cm-move-up">Up</button>' +
-				'<button type="button" class="button-link cm-move-down">Down</button>' +
-				'<button type="button" class="button-link cm-remove-post">Remove</button>' +
-				'</li>'
+		var $item = $( '<li/>' ).attr( 'data-id', post.id );
+		$item.append(
+			$( '<input type="hidden" name="collection[post_ids][]" />' ).val( post.id )
 		);
-		$item.find( '.cm-selected-posts__title' ).text( post.title );
+		$item.append( iconButton( 'cm-drag', 'dashicons-move', i18n( 'drag', 'Drag to reorder' ) ) );
+		$item.append( thumb( post.image ) );
+		var $body = $( '<span class="cm-selected-posts__body"/>' );
+		$body.append( $( '<span class="cm-selected-posts__title"/>' ).text( post.title ) );
+		var meta = metaText( post );
+		if ( meta ) {
+			$body.append( $( '<span class="cm-selected-posts__meta"/>' ).text( meta ) );
+		}
+		$item.append( $body );
+		$item.append( iconButton( 'cm-move-up', 'dashicons-arrow-up-alt2', i18n( 'moveUp', 'Move up' ) ) );
+		$item.append(
+			iconButton( 'cm-move-down', 'dashicons-arrow-down-alt2', i18n( 'moveDown', 'Move down' ) )
+		);
+		$item.append( iconButton( 'cm-remove-post', 'dashicons-no-alt', i18n( 'remove', 'Remove' ) ) );
 		$( '#cm-selected-posts' ).append( $item );
 	}
 
@@ -44,6 +56,12 @@
 		$( '#cm-panel-youtube' ).prop( 'hidden', source !== 'youtube' );
 		$( '#cm-panel-feed' ).prop( 'hidden', source !== 'feed' );
 		syncYoutubeMode();
+		if ( source === 'manual' ) {
+			ensureBrowse();
+		}
+		if ( source === 'query' ) {
+			refreshQueryPreview();
+		}
 	}
 
 	function youtubeMode() {
@@ -301,6 +319,627 @@
 		return ( data[ postType ] && data[ postType ].taxonomies ) || {};
 	}
 
+	function i18n( key, fallback ) {
+		return ( config.i18n && config.i18n[ key ] ) || fallback;
+	}
+
+	function metaText( post ) {
+		var parts = [];
+		if ( post.date ) {
+			parts.push( post.date );
+		}
+		( post.terms || [] ).forEach( function ( term ) {
+			parts.push( term );
+		} );
+		return parts.join( ' · ' );
+	}
+
+	function thumb( url ) {
+		if ( ! url ) {
+			return $( '<span class="cm-thumb cm-thumb--empty" aria-hidden="true"></span>' );
+		}
+		return $( '<img class="cm-thumb" alt="" />' ).attr( 'src', url );
+	}
+
+	function iconButton( className, icon, label ) {
+		var $button = $( '<button type="button"/>' )
+			.addClass( className )
+			.attr( 'aria-label', label );
+		if ( className !== 'cm-drag' ) {
+			$button.addClass( 'button-link' );
+		}
+		$button.append( $( '<span class="dashicons" aria-hidden="true"/>' ).addClass( icon ) );
+		return $button;
+	}
+
+	function sortTerms( terms, flat ) {
+		if ( flat ) {
+			return terms.map( function ( term ) {
+				return $.extend( {}, term, { depth: 0 } );
+			} );
+		}
+
+		var byParent = {};
+		terms.forEach( function ( term ) {
+			var parent = term.parent || 0;
+			if ( ! byParent[ parent ] ) {
+				byParent[ parent ] = [];
+			}
+			byParent[ parent ].push( term );
+		} );
+
+		var out = [];
+		var seen = {};
+		function walk( parent, depth ) {
+			( byParent[ parent ] || [] ).forEach( function ( term ) {
+				if ( seen[ term.id ] ) {
+					return;
+				}
+				seen[ term.id ] = true;
+				out.push( $.extend( {}, term, { depth: depth } ) );
+				walk( term.id, depth + 1 );
+			} );
+		}
+		walk( 0, 0 );
+		terms.forEach( function ( term ) {
+			if ( ! seen[ term.id ] ) {
+				out.push( $.extend( {}, term, { depth: 0 } ) );
+			}
+		} );
+		return out;
+	}
+
+	function termLabel( term ) {
+		var depth = term.depth || 0;
+		var prefix = depth ? new Array( depth + 1 ).join( '\u2013 ' ) : '';
+		return prefix + term.name;
+	}
+
+	function getTerms( postType, taxonomy, search, hideEmpty ) {
+		var cacheKey = postType + '|' + taxonomy + '|' + ( hideEmpty ? '1' : '0' );
+		var deferred = $.Deferred();
+		var catalog = termCatalog[ cacheKey ];
+		var query = $.trim( search || '' );
+
+		if ( catalog && ! catalog.truncated ) {
+			var needle = query.toLowerCase();
+			deferred.resolve( {
+				terms: catalog.terms.filter( function ( term ) {
+					return ! needle || term.name.toLowerCase().indexOf( needle ) !== -1;
+				} ),
+				truncated: false,
+			} );
+			return deferred.promise();
+		}
+
+		if ( catalog && catalog.truncated && query.length < 2 ) {
+			deferred.resolve( {
+				terms: query ? [] : catalog.terms,
+				truncated: true,
+				needMore: query.length === 1,
+			} );
+			return deferred.promise();
+		}
+
+		$.getJSON( config.ajaxUrl, {
+			action: 'collections_manager_query_terms',
+			_ajax_nonce: config.nonce,
+			post_type: postType,
+			taxonomy: taxonomy,
+			s: query,
+			hide_empty: hideEmpty ? 1 : 0,
+		} )
+			.done( function ( response ) {
+				var payload =
+					response && response.success && response.data
+						? response.data
+						: { terms: [], truncated: false };
+				if ( ! Array.isArray( payload.terms ) ) {
+					payload.terms = [];
+				}
+				if ( ! query ) {
+					termCatalog[ cacheKey ] = payload;
+				}
+				deferred.resolve( payload );
+			} )
+			.fail( function () {
+				deferred.resolve( { terms: [], truncated: false } );
+			} );
+
+		return deferred.promise();
+	}
+
+	function closeTaxMenus() {
+		$( '.cm-tax__menu' ).prop( 'hidden', true );
+		$( '.cm-tax__toggle' ).attr( 'aria-expanded', 'false' );
+	}
+
+	function syncTaxButton( $box ) {
+		var taxonomy = $box.data( 'taxonomy' );
+		var chosen = taxFilters[ taxonomy ];
+		var $btn = $box.find( '.cm-tax__toggle' );
+		$btn.text( chosen ? chosen.name : $box.data( 'label' ) );
+		$btn.toggleClass( 'is-set', !! chosen );
+	}
+
+	function currentTaxesParam() {
+		return Object.keys( taxFilters )
+			.filter( function ( tax ) {
+				return taxFilters[ tax ] && taxFilters[ tax ].id;
+			} )
+			.map( function ( tax ) {
+				return tax + ':' + taxFilters[ tax ].id;
+			} )
+			.join( ';' );
+	}
+
+	function filtersActive() {
+		return $.trim( $( '#cm-post-search' ).val() ) !== '' || currentTaxesParam() !== '';
+	}
+
+	function syncAddMatching() {
+		var key = currentTaxesParam() + '|' + $.trim( $( '#cm-post-search' ).val() );
+		var $btn = $( '#cm-add-matching' );
+		if ( ! filtersActive() ) {
+			$btn.prop( 'hidden', true );
+			addMatchKey = key;
+			return;
+		}
+		if ( key === addMatchKey ) {
+			return;
+		}
+		addMatchKey = key;
+		$btn.prop( 'hidden', false );
+		$btn.text( i18n( 'addMatching', 'Add matching posts' ) ).data( 'page', 1 );
+	}
+
+	function pickerTaxonomies( postType ) {
+		var taxes = taxonomiesFor( postType );
+		var preferred = {};
+		if ( taxes.category ) {
+			preferred.category = taxes.category;
+		}
+		if ( taxes.post_tag ) {
+			preferred.post_tag = taxes.post_tag;
+		}
+		return Object.keys( preferred ).length ? preferred : taxes;
+	}
+
+	function renderTaxFilters() {
+		taxFilters = {};
+		var postType = $( '#cm-manual-post-type' ).val();
+		var taxes = pickerTaxonomies( postType );
+		var $wrap = $( '#cm-picker-taxes' ).empty();
+		Object.keys( taxes ).forEach( function ( slug ) {
+			var label = taxes[ slug ];
+			var $box = $( '<div class="cm-tax"/>' );
+			$box.data( 'taxonomy', slug );
+			$box.data( 'label', label );
+			var $toggle = $( '<button type="button" class="button cm-tax__toggle"/>' )
+				.attr( 'aria-expanded', 'false' )
+				.attr( 'aria-haspopup', 'listbox' )
+				.text( label );
+			var $menu = $( '<div class="cm-tax__menu" hidden/>' );
+			var $search = $( '<input type="search" class="cm-tax__search" autocomplete="off" />' ).attr(
+				'placeholder',
+				i18n( 'searchTax', 'Search %s…' ).replace( '%s', label )
+			);
+			var $searchRow = $( '<div class="cm-tax__search-row"/>' );
+			$searchRow.append( $search, $( '<span class="cm-spinner" aria-hidden="true"/>' ) );
+			$menu.append( $searchRow, $( '<ul class="cm-tax__list" role="listbox"/>' ) );
+			$box.append( $toggle, $menu );
+			$wrap.append( $box );
+		} );
+		syncAddMatching();
+	}
+
+	function refreshTaxMenu( $box, search ) {
+		var taxonomy = $box.data( 'taxonomy' );
+		var label = $box.data( 'label' );
+		var postType = $( '#cm-manual-post-type' ).val();
+		var token = ( $box.data( 'token' ) || 0 ) + 1;
+		$box.data( 'token', token );
+		armSpinner( $box );
+		getTerms( postType, taxonomy, search, true ).done( function ( payload ) {
+			if ( $box.data( 'token' ) !== token ) {
+				return;
+			}
+			clearSpinner( $box );
+			var $list = $box.find( '.cm-tax__list' ).empty();
+			var $all = $( '<button type="button"/>' ).text(
+				i18n( 'allTax', 'All %s' ).replace( '%s', label )
+			);
+			if ( ! taxFilters[ taxonomy ] ) {
+				$all.attr( 'aria-current', 'true' );
+			}
+			$all.on( 'click', function () {
+				delete taxFilters[ taxonomy ];
+				syncTaxButton( $box );
+				closeTaxMenus();
+				loadPosts( false );
+			} );
+			$list.append( $( '<li/>' ).append( $all ) );
+
+			if ( payload.needMore ) {
+				$list.append(
+					$( '<li class="cm-tax__empty"/>' ).text(
+						i18n( 'typeMore', 'Type at least 2 letters to search.' )
+					)
+				);
+				return;
+			}
+
+			var terms = sortTerms( payload.terms || [], !! payload.truncated || !! $.trim( search ) );
+			terms.forEach( function ( term ) {
+				var $btn = $( '<button type="button"/>' );
+				$btn.append( $( '<span/>' ).text( termLabel( term ) ) );
+				$btn.append( $( '<span class="cm-term-count"/>' ).text( String( term.count ) ) );
+				if (
+					taxFilters[ taxonomy ] &&
+					String( taxFilters[ taxonomy ].id ) === String( term.id )
+				) {
+					$btn.attr( 'aria-current', 'true' );
+				}
+				$btn.on( 'click', function () {
+					taxFilters[ taxonomy ] = { id: term.id, name: term.name };
+					syncTaxButton( $box );
+					closeTaxMenus();
+					loadPosts( false );
+				} );
+				$list.append( $( '<li/>' ).append( $btn ) );
+			} );
+
+			if ( ! terms.length ) {
+				$list.append(
+					$( '<li class="cm-tax__empty"/>' ).text( i18n( 'noTerms', 'No matches.' ) )
+				);
+			} else if ( payload.truncated && ! $.trim( search ) ) {
+				$list.append(
+					$( '<li class="cm-tax__empty"/>' ).text(
+						i18n( 'popularHint', 'Showing popular terms. Type to search the rest.' )
+					)
+				);
+			}
+		} );
+	}
+
+	function syncRowState( $btn, id ) {
+		var on = selectedIds().indexOf( String( id ) ) !== -1;
+		$btn.attr( 'aria-pressed', on ? 'true' : 'false' );
+		$btn.find( '.cm-pick-row__state' ).text( on ? i18n( 'added', 'Added' ) : i18n( 'add', 'Add' ) );
+	}
+
+	function refreshSelected() {
+		var count = selectedIds().length;
+		$( '#cm-selected-count' ).text( String( count ) );
+		$( '#cm-selected-empty' ).prop( 'hidden', count > 0 );
+		$( '#cm-search-results .cm-pick-row' ).each( function () {
+			syncRowState( $( this ), $( this ).attr( 'data-id' ) );
+		} );
+	}
+
+	function browseRow( post ) {
+		var $btn = $( '<button type="button" class="cm-pick-row"/>' ).attr( 'data-id', post.id );
+		$btn.append( thumb( post.image ) );
+		var $body = $( '<span class="cm-pick-row__body"/>' );
+		$body.append( $( '<span class="cm-pick-row__title"/>' ).text( post.title ) );
+		var meta = metaText( post );
+		if ( meta ) {
+			$body.append( $( '<span class="cm-pick-row__meta"/>' ).text( meta ) );
+		}
+		$btn.append( $body );
+		$btn.append( $( '<span class="cm-pick-row__state"/>' ) );
+		$btn.on( 'click', function () {
+			togglePost( post );
+		} );
+		syncRowState( $btn, post.id );
+		return $( '<li/>' ).append( $btn );
+	}
+
+	function togglePost( post ) {
+		if ( selectedIds().indexOf( String( post.id ) ) !== -1 ) {
+			$( '#cm-selected-posts li' )
+				.filter( function () {
+					return String( $( this ).attr( 'data-id' ) ) === String( post.id );
+				} )
+				.remove();
+		} else {
+			addPost( post );
+		}
+		refreshSelected();
+	}
+
+	function armSpinner( $root ) {
+		window.clearTimeout( $root.data( 'spinTimer' ) );
+		$root.data(
+			'spinTimer',
+			window.setTimeout( function () {
+				$root.addClass( 'is-searching' );
+			}, 120 )
+		);
+	}
+
+	function clearSpinner( $root ) {
+		window.clearTimeout( $root.data( 'spinTimer' ) );
+		$root.removeClass( 'is-searching' );
+	}
+
+	function setPostSearchBusy( busy ) {
+		$( '#cm-panel-manual' ).toggleClass( 'is-searching', !! busy );
+		$( '#cm-post-search-wrap' ).toggleClass( 'is-searching', !! busy );
+		$( '#cm-search-results' ).attr( 'aria-busy', busy ? 'true' : 'false' );
+		if ( busy ) {
+			$( '#cm-picker-status' ).text( i18n( 'searching', 'Searching…' ) );
+		}
+	}
+
+	function previewVisiblePosts( query ) {
+		var needle = $.trim( query || '' ).toLowerCase();
+		var visible = 0;
+		$( '#cm-search-results > li' ).each( function () {
+			var $li = $( this );
+			if ( $li.hasClass( 'cm-picker__searching' ) ) {
+				return;
+			}
+			var title = $li.find( '.cm-pick-row__title' ).text().toLowerCase();
+			var meta = $li.find( '.cm-pick-row__meta' ).text().toLowerCase();
+			var show = ! needle || title.indexOf( needle ) !== -1 || meta.indexOf( needle ) !== -1;
+			$li.toggleClass( 'is-filtered-out', ! show );
+			if ( show ) {
+				visible += 1;
+			}
+		} );
+		$( '#cm-search-results .cm-picker__searching' ).remove();
+		if ( needle && ! visible ) {
+			var $note = $( '<li class="cm-picker__searching"/>' );
+			$note.append( $( '<span class="cm-spinner" aria-hidden="true"/>' ) );
+			$note.append( document.createTextNode( i18n( 'searching', 'Searching…' ) ) );
+			$( '#cm-search-results' ).prepend( $note );
+		}
+	}
+
+	function loadPosts( append ) {
+		var token = ++browseToken;
+		var page = append ? browsePage + 1 : 1;
+		if ( ! append ) {
+			setPostSearchBusy( true );
+		}
+		$.getJSON( config.ajaxUrl, {
+			action: 'collections_manager_search_posts',
+			_ajax_nonce: config.nonce,
+			s: $.trim( $( '#cm-post-search' ).val() ),
+			post_type: $( '#cm-manual-post-type' ).val() || 'post',
+			page: page,
+			per_page: 16,
+			taxes: currentTaxesParam(),
+		} )
+			.done( function ( response ) {
+				if ( token !== browseToken ) {
+					return;
+				}
+				var data = ( response && response.success && response.data ) || {};
+				var posts = data.posts || [];
+				var $list = $( '#cm-search-results' );
+				if ( ! append ) {
+					$list.empty();
+				}
+				if ( ! posts.length && ! append ) {
+					$list.append(
+						$( '<li class="cm-picker__empty"/>' ).text( i18n( 'noPosts', 'No posts match.' ) )
+					);
+				}
+				posts.forEach( function ( post ) {
+					$list.append( browseRow( post ) );
+				} );
+				browsePage = page;
+				$( '#cm-load-more' ).prop( 'hidden', ! data.has_more );
+				setPostSearchBusy( false );
+				$( '#cm-picker-status' ).text(
+					posts.length
+						? i18n( 'newest', 'Newest first. Click a post to add or remove it.' )
+						: ''
+				);
+				syncAddMatching();
+			} )
+			.fail( function () {
+				if ( token !== browseToken ) {
+					return;
+				}
+				setPostSearchBusy( false );
+				$( '#cm-picker-status' ).text( i18n( 'loadError', 'Could not load posts.' ) );
+			} );
+	}
+
+	function ensureBrowse() {
+		if ( currentSource() !== 'manual' ) {
+			return;
+		}
+		if ( $( '#cm-search-results' ).children().length ) {
+			return;
+		}
+		loadPosts( false );
+	}
+
+	function queryTaxesParam() {
+		var taxonomy = $( '#cm-query-taxonomy' ).val();
+		if ( ! taxonomy ) {
+			return '';
+		}
+		var ids = $( '#cm-query-selected-terms input' )
+			.map( function () {
+				return $( this ).val();
+			} )
+			.get()
+			.filter( Boolean );
+		if ( ! ids.length ) {
+			return '';
+		}
+		return taxonomy + ':' + ids.join( ',' );
+	}
+
+	function selectedQueryTermIds() {
+		var ids = {};
+		$( '#cm-query-selected-terms input' ).each( function () {
+			ids[ String( $( this ).val() ) ] = true;
+		} );
+		return ids;
+	}
+
+	function addQueryTerm( term ) {
+		var id = String( term.id );
+		if ( selectedQueryTermIds()[ id ] ) {
+			return;
+		}
+		var $chip = $( '<span class="cm-chip"/>' );
+		$chip.append( $( '<input type="hidden" name="collection[query][terms][]" />' ).val( id ) );
+		$chip.append( $( '<span class="cm-chip__label"/>' ).text( term.name ) );
+		$chip.append(
+			$( '<button type="button" class="button-link cm-chip__remove"/>' )
+				.attr( 'aria-label', i18n( 'remove', 'Remove' ) )
+				.text( '\u00d7' )
+		);
+		$( '#cm-query-selected-terms' ).append( $chip );
+		refreshQueryPreview();
+	}
+
+	function syncQueryTermPlaceholder() {
+		var label = $( '#cm-query-taxonomy option:selected' ).text() || 'terms';
+		$( '#cm-query-term-search' ).attr(
+			'placeholder',
+			i18n( 'searchTax', 'Search %s…' ).replace( '%s', label )
+		);
+		$( '#cm-query-term-search' ).prop( 'hidden', ! $( '#cm-query-taxonomy' ).val() );
+	}
+
+	function renderQueryTermResults( payload, search ) {
+		var $list = $( '#cm-query-term-results' ).empty();
+		if ( payload.needMore ) {
+			$list.append(
+				$( '<li class="cm-tax__empty"/>' ).text(
+					i18n( 'typeMore', 'Type at least 2 letters to search.' )
+				)
+			);
+			$list.prop( 'hidden', false );
+			return;
+		}
+
+		var selected = selectedQueryTermIds();
+		var terms = ( payload.terms || [] ).filter( function ( term ) {
+			return ! selected[ String( term.id ) ];
+		} );
+		terms = sortTerms( terms, !! payload.truncated || !! $.trim( search ) );
+		if ( ! terms.length ) {
+			$list.append( $( '<li class="cm-tax__empty"/>' ).text( i18n( 'noTerms', 'No matches.' ) ) );
+			$list.prop( 'hidden', false );
+			return;
+		}
+
+		terms.forEach( function ( term ) {
+			var $btn = $( '<button type="button"/>' );
+			$btn.append( $( '<span/>' ).text( termLabel( term ) ) );
+			$btn.append( $( '<span class="cm-term-count"/>' ).text( String( term.count ) ) );
+			$btn.on( 'click', function () {
+				addQueryTerm( term );
+				$( '#cm-query-term-search' ).val( '' );
+				loadQueryTermResults( '' );
+			} );
+			$list.append( $( '<li/>' ).append( $btn ) );
+		} );
+		if ( payload.truncated && ! $.trim( search ) ) {
+			$list.append(
+				$( '<li class="cm-tax__empty"/>' ).text(
+					i18n( 'popularHint', 'Showing popular terms. Type to search the rest.' )
+				)
+			);
+		}
+		$list.prop( 'hidden', false );
+	}
+
+	function loadQueryTermResults( search ) {
+		var postType = $( '#cm-query-post-type' ).val();
+		var taxonomy = $( '#cm-query-taxonomy' ).val();
+		var token = ++queryTermToken;
+		if ( ! taxonomy ) {
+			$( '#cm-query-term-results' ).empty().prop( 'hidden', true );
+			return;
+		}
+		var $picker = $( '#cm-query-terms' );
+		armSpinner( $picker );
+		getTerms( postType, taxonomy, search, false ).done( function ( payload ) {
+			if ( token !== queryTermToken ) {
+				return;
+			}
+			clearSpinner( $picker );
+			renderQueryTermResults( payload, search );
+		} );
+	}
+
+	function refreshQueryPreview() {
+		if ( currentSource() !== 'query' || ! $( '#cm-query-preview' ).length ) {
+			return;
+		}
+		var token = ++previewToken;
+		var $box = $( '#cm-query-preview' );
+		var hasTerms = queryTaxesParam() !== '';
+		$box.text( i18n( 'loading', 'Loading…' ) );
+		$.getJSON( config.ajaxUrl, {
+			action: 'collections_manager_search_posts',
+			_ajax_nonce: config.nonce,
+			post_type: $( '#cm-query-post-type' ).val() || 'post',
+			taxes: queryTaxesParam(),
+			per_page: 8,
+			page: 1,
+			s: '',
+		} )
+			.done( function ( response ) {
+				if ( token !== previewToken ) {
+					return;
+				}
+				var data = ( response && response.success && response.data ) || {};
+				var posts = data.posts || [];
+				$box.empty();
+				$box.append(
+					$( '<p class="description"/>' ).text(
+						hasTerms
+							? i18n( 'previewNewest', 'Newest matches' )
+							: i18n(
+									'previewAll',
+									'No category or tag selected, so this is every published item of this type.'
+							  )
+					)
+				);
+				if ( ! posts.length ) {
+					$box.append(
+						$( '<p class="description"/>' ).text( i18n( 'noPosts', 'No posts match.' ) )
+					);
+					return;
+				}
+				var $ul = $( '<ul class="cm-query-preview__list"/>' );
+				posts.forEach( function ( post ) {
+					var $li = $( '<li/>' );
+					$li.append( $( '<span/>' ).text( post.title ) );
+					if ( post.date ) {
+						$li.append( $( '<span class="cm-term-count"/>' ).text( post.date ) );
+					}
+					$ul.append( $li );
+				} );
+				$box.append( $ul );
+				if ( data.has_more ) {
+					$box.append(
+						$( '<p class="description"/>' ).text(
+							i18n( 'previewMore', 'More posts match than shown here.' )
+						)
+					);
+				}
+			} )
+			.fail( function () {
+				if ( token !== previewToken ) {
+					return;
+				}
+				$box.text( i18n( 'loadError', 'Could not load posts.' ) );
+			} );
+	}
+
 	function fillTaxonomySelect() {
 		var postType = $( '#cm-query-post-type' ).val();
 		var taxes = taxonomiesFor( postType );
@@ -310,65 +949,40 @@
 
 		if ( ! names.length ) {
 			$tax.append( $( '<option/>' ).val( '' ).text( 'None available' ) );
-			renderTerms( [] );
-			return;
+		} else {
+			names.forEach( function ( name ) {
+				$tax.append( $( '<option/>' ).val( name ).text( taxes[ name ] ) );
+			} );
+			if ( current && taxes[ current ] ) {
+				$tax.val( current );
+			}
 		}
 
-		names.forEach( function ( name ) {
-			$tax.append( $( '<option/>' ).val( name ).text( taxes[ name ] ) );
-		} );
-
-		if ( current && taxes[ current ] ) {
-			$tax.val( current );
-		}
-
-		loadTerms();
+		$( '#cm-query-selected-terms' ).empty();
+		$( '#cm-query-term-search' ).val( '' );
+		$( '#cm-query-term-results' ).empty().prop( 'hidden', true );
+		syncQueryTermPlaceholder();
+		refreshQueryPreview();
 	}
 
-	function renderTerms( terms ) {
-		var $list = $( '#cm-query-terms' ).empty();
-		if ( ! terms.length ) {
-			$list.append(
-				$( '<p class="description"/>' ).text( 'No terms yet for this taxonomy.' )
-			);
-			return;
+	function initPicker() {
+		renderTaxFilters();
+		refreshSelected();
+		if ( $.fn.sortable ) {
+			$( '#cm-selected-posts' ).sortable( {
+				handle: '.cm-drag',
+				axis: 'y',
+				tolerance: 'pointer',
+				placeholder: 'cm-sortable-placeholder',
+				forcePlaceholderSize: true,
+				cancel: 'input,textarea,select,option,.cm-remove-post,.cm-move-up,.cm-move-down',
+			} );
 		}
-
-		terms.forEach( function ( term ) {
-			var $label = $( '<label/>' );
-			$label.append(
-				$( '<input type="checkbox" name="collection[query][terms][]" />' ).val(
-					term.id
-				)
-			);
-			$label.append( document.createTextNode( ' ' + term.name + ' ' ) );
-			$label.append(
-				$( '<span class="cm-term-count"/>' ).text( '(' + term.count + ')' )
-			);
-			$list.append( $label );
-		} );
-	}
-
-	function loadTerms() {
-		var taxonomy = $( '#cm-query-taxonomy' ).val();
-		var postType = $( '#cm-query-post-type' ).val();
-		if ( ! taxonomy ) {
-			renderTerms( [] );
-			return;
+		syncQueryTermPlaceholder();
+		ensureBrowse();
+		if ( currentSource() === 'query' ) {
+			refreshQueryPreview();
 		}
-
-		$.getJSON( config.ajaxUrl, {
-			action: 'collections_manager_query_terms',
-			_ajax_nonce: config.nonce,
-			post_type: postType,
-			taxonomy: taxonomy,
-		} ).done( function ( response ) {
-			renderTerms(
-				response && response.success && Array.isArray( response.data )
-					? response.data
-					: []
-			);
-		} );
 	}
 
 	$( '.cm-select-image' ).on( 'click', function ( event ) {
@@ -637,46 +1251,163 @@
 		} );
 	} );
 
-	$( '#cm-query-post-type' ).on( 'change', fillTaxonomySelect );
-	$( '#cm-query-taxonomy' ).on( 'change', loadTerms );
+	$( '#cm-manual-post-type' ).on( 'change', function () {
+		renderTaxFilters();
+		loadPosts( false );
+	} );
 
-	$( '#cm-post-search' ).on( 'input', function () {
-		var query = $.trim( $( this ).val() );
-		window.clearTimeout( searchTimer );
-		if ( query.length < 2 ) {
-			$( '#cm-search-results' ).empty().prop( 'hidden', true );
+	$( '#cm-picker-taxes' ).on( 'click', '.cm-tax__toggle', function ( event ) {
+		event.preventDefault();
+		var $box = $( this ).closest( '.cm-tax' );
+		var $menu = $box.find( '.cm-tax__menu' );
+		var willOpen = $menu.prop( 'hidden' );
+		closeTaxMenus();
+		if ( ! willOpen ) {
 			return;
 		}
+		$menu.prop( 'hidden', false );
+		$box.find( '.cm-tax__toggle' ).attr( 'aria-expanded', 'true' );
+		$box.find( '.cm-tax__search' ).trigger( 'focus' );
+		refreshTaxMenu( $box, $.trim( $box.find( '.cm-tax__search' ).val() ) );
+	} );
 
+	$( '#cm-picker-taxes' ).on( 'input', '.cm-tax__search', function () {
+		var $box = $( this ).closest( '.cm-tax' );
+		var value = $( this ).val();
+		window.clearTimeout( $box.data( 'timer' ) );
+		$box.data(
+			'timer',
+			window.setTimeout( function () {
+				refreshTaxMenu( $box, $.trim( value ) );
+			}, 200 )
+		);
+	} );
+
+	function isCollectionSearch( el ) {
+		return $( el ).is(
+			'#cm-post-search, #cm-query-term-search, #cm-youtube-video-search, .cm-tax__search'
+		);
+	}
+
+	function runCollectionSearch( el ) {
+		var $el = $( el );
+		if ( $el.is( '#cm-post-search' ) ) {
+			window.clearTimeout( searchTimer );
+			loadPosts( false );
+			return;
+		}
+		if ( $el.is( '.cm-tax__search' ) ) {
+			var $box = $el.closest( '.cm-tax' );
+			window.clearTimeout( $box.data( 'timer' ) );
+			$box.find( '.cm-tax__menu' ).prop( 'hidden', false );
+			$box.find( '.cm-tax__toggle' ).attr( 'aria-expanded', 'true' );
+			refreshTaxMenu( $box, $.trim( $el.val() ) );
+			return;
+		}
+		if ( $el.is( '#cm-query-term-search' ) ) {
+			window.clearTimeout( queryTermTimer );
+			loadQueryTermResults( $.trim( $el.val() ) );
+			return;
+		}
+		if ( $el.is( '#cm-youtube-video-search' ) ) {
+			$( '#cm-youtube-load-videos' ).trigger( 'click' );
+		}
+	}
+
+	var searchEnterGuard = false;
+
+	$( '#cm-collection-form' ).on( 'keydown', 'input', function ( event ) {
+		if ( ( event.key !== 'Enter' && event.key !== 'NumpadEnter' ) || ! isCollectionSearch( this ) ) {
+			return;
+		}
+		event.preventDefault();
+		searchEnterGuard = true;
+		runCollectionSearch( this );
+	} );
+
+	$( '#cm-collection-form' ).on( 'submit', function ( event ) {
+		var active = document.activeElement;
+		if ( ! searchEnterGuard && ! isCollectionSearch( active ) ) {
+			return;
+		}
+		event.preventDefault();
+		if ( ! searchEnterGuard && active ) {
+			runCollectionSearch( active );
+		}
+		searchEnterGuard = false;
+	} );
+
+	$( '#cm-post-search' ).on( 'input', function () {
+		var query = $( this ).val();
+		setPostSearchBusy( true );
+		previewVisiblePosts( query );
+		window.clearTimeout( searchTimer );
 		searchTimer = window.setTimeout( function () {
-			$.getJSON( config.ajaxUrl, {
-				action: 'collections_manager_search_posts',
-				_ajax_nonce: config.nonce,
-				s: query,
-				post_type: $( '#cm-manual-post-type' ).val() || 'post',
-			} ).done( function ( response ) {
-				var $list = $( '#cm-search-results' ).empty();
-				if ( ! response || ! response.success || ! response.data.length ) {
-					$list.prop( 'hidden', true );
-					return;
+			loadPosts( false );
+		}, 150 );
+	} );
+
+	$( '#cm-load-more' ).on( 'click', function () {
+		loadPosts( true );
+	} );
+
+	$( '#cm-add-matching' ).on( 'click', function () {
+		var $btn = $( this );
+		var page = $btn.data( 'page' ) || 1;
+		$btn.prop( 'disabled', true );
+		$.getJSON( config.ajaxUrl, {
+			action: 'collections_manager_search_posts',
+			_ajax_nonce: config.nonce,
+			s: $.trim( $( '#cm-post-search' ).val() ),
+			post_type: $( '#cm-manual-post-type' ).val() || 'post',
+			page: page,
+			per_page: 40,
+			taxes: currentTaxesParam(),
+		} )
+			.done( function ( response ) {
+				var data = ( response && response.success && response.data ) || {};
+				var posts = data.posts || [];
+				var before = selectedIds().length;
+				posts.forEach( addPost );
+				refreshSelected();
+				var added = selectedIds().length - before;
+				if ( data.has_more ) {
+					$btn.data( 'page', page + 1 ).text( i18n( 'addMore', 'Add more matches' ) );
+				} else {
+					$btn.prop( 'hidden', true );
 				}
-				response.data.forEach( function ( post ) {
-					var $row = $(
-						'<li><span></span><button type="button" class="button">Add</button></li>'
-					);
-					$row.find( 'span' ).text( post.title );
-					$row.find( 'button' ).on( 'click', function () {
-						addPost( post );
-					} );
-					$list.append( $row );
-				} );
-				$list.prop( 'hidden', false );
+				$( '#cm-picker-status' ).text(
+					added
+						? i18n( 'addedCount', 'Added %d posts.' ).replace( '%d', String( added ) )
+						: i18n( 'alreadyIn', 'Those posts are already in the collection.' )
+				);
+			} )
+			.fail( function () {
+				$( '#cm-picker-status' ).text( i18n( 'loadError', 'Could not load posts.' ) );
+			} )
+			.always( function () {
+				$btn.prop( 'disabled', false );
 			} );
-		}, 250 );
+	} );
+
+	$( '#cm-clear-selected' ).on( 'click', function () {
+		if ( ! selectedIds().length ) {
+			return;
+		}
+		if (
+			! window.confirm(
+				i18n( 'clearConfirm', 'Remove every selected post from this collection?' )
+			)
+		) {
+			return;
+		}
+		$( '#cm-selected-posts' ).empty();
+		refreshSelected();
 	} );
 
 	$( '#cm-selected-posts' ).on( 'click', '.cm-remove-post', function () {
 		$( this ).closest( 'li' ).remove();
+		refreshSelected();
 	} );
 
 	$( '#cm-selected-posts' ).on( 'click', '.cm-move-up', function () {
@@ -688,4 +1419,49 @@
 		var $item = $( this ).closest( 'li' );
 		$item.next( 'li' ).after( $item );
 	} );
+
+	$( '#cm-query-post-type' ).on( 'change', fillTaxonomySelect );
+
+	$( '#cm-query-taxonomy' ).on( 'change', function () {
+		$( '#cm-query-selected-terms' ).empty();
+		$( '#cm-query-term-search' ).val( '' );
+		$( '#cm-query-term-results' ).empty().prop( 'hidden', true );
+		syncQueryTermPlaceholder();
+		refreshQueryPreview();
+	} );
+
+	$( '#cm-query-selected-terms' ).on( 'click', '.cm-chip__remove', function () {
+		$( this ).closest( '.cm-chip' ).remove();
+		refreshQueryPreview();
+	} );
+
+	$( '#cm-query-term-search' ).on( 'focus', function () {
+		loadQueryTermResults( $.trim( $( this ).val() ) );
+	} );
+
+	$( '#cm-query-term-search' ).on( 'input', function () {
+		var value = $.trim( $( this ).val() );
+		window.clearTimeout( queryTermTimer );
+		queryTermTimer = window.setTimeout( function () {
+			loadQueryTermResults( value );
+		}, 200 );
+	} );
+
+	$( document ).on( 'click', function ( event ) {
+		if ( ! $( event.target ).closest( '.cm-tax' ).length ) {
+			closeTaxMenus();
+		}
+		if ( ! $( event.target ).closest( '#cm-query-terms' ).length ) {
+			$( '#cm-query-term-results' ).prop( 'hidden', true );
+		}
+	} );
+
+	$( document ).on( 'keydown', function ( event ) {
+		if ( event.key === 'Escape' ) {
+			closeTaxMenus();
+			$( '#cm-query-term-results' ).prop( 'hidden', true );
+		}
+	} );
+
+	initPicker();
 } )( jQuery );

@@ -68,9 +68,12 @@ $wrapper_attrs = get_block_wrapper_attributes(
 						data-collection-id="<?php echo esc_attr( (string) $collection['id'] ); ?>"
 					>
 						<span class="cm-browser__tab-cover">
-							<?php if ( ! empty( $collection['cover'] ) ) : ?>
-								<img src="<?php echo esc_url( $collection['cover'] ); ?>" alt="" />
-							<?php endif; ?>
+							<?php
+							$cover_html = collections_manager_card_image_html( $collection['cover_id'] ?? 0, $collection['cover'] ?? '' );
+							if ( '' !== $cover_html ) {
+								echo $cover_html; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in collections_manager_card_image_html().
+							}
+							?>
 							<span class="cm-browser__tab-shade"></span>
 						</span>
 						<span class="cm-browser__tab-meta">
@@ -143,9 +146,12 @@ $wrapper_attrs = get_block_wrapper_attributes(
 									?>
 									<a class="<?php echo esc_attr( $card_class ); ?>" href="<?php echo esc_url( $item['url'] ); ?>"<?php echo $external ? ' target="_blank" rel="noopener noreferrer"' : ''; ?>>
 										<span class="cm-browser__card-media">
-											<?php if ( ! empty( $item['image'] ) ) : ?>
-												<img src="<?php echo esc_url( $item['image'] ); ?>" alt="" />
-											<?php endif; ?>
+											<?php
+											$image_html = collections_manager_card_image_html( $item['image_id'] ?? 0, $item['image'] ?? '' );
+											if ( '' !== $image_html ) {
+												echo $image_html; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in collections_manager_card_image_html().
+											}
+											?>
 											<span class="cm-browser__card-shade"></span>
 										</span>
 										<span class="cm-browser__card-title">

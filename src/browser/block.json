@@ -2,13 +2,17 @@
 	"$schema": "https://schemas.wp.org/trunk/block.json",
 	"apiVersion": 3,
 	"name": "collections-manager/browser",
-	"version": "0.2.3",
+	"version": "0.2.10",
 	"title": "Collections Browser",
 	"category": "widgets",
 	"icon": "index-card",
 	"description": "A row of collections. Click one to expand a carousel of its posts without leaving the page.",
 	"keywords": [ "collection", "carousel", "curated", "posts" ],
 	"attributes": {
+		"placement": {
+			"type": "string",
+			"default": ""
+		},
 		"showAllCollections": {
 			"type": "boolean",
 			"default": true

@@ -8,6 +8,34 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 add_action( 'init', 'collections_manager_register_post_type' );
+add_filter( 'wp_sitemaps_post_types', 'collections_manager_exclude_sitemap_post_types' );
+add_filter( 'wp_sitemaps_taxonomies', 'collections_manager_exclude_sitemap_taxonomies' );
+
+/**
+ * Keep collections out of the core XML sitemap.
+ *
+ * @param array<string, WP_Post_Type> $post_types Post types included in the sitemap.
+ * @return array<string, WP_Post_Type>
+ */
+function collections_manager_exclude_sitemap_post_types( $post_types ) {
+	unset( $post_types[ COLLECTIONS_MANAGER_POST_TYPE ] );
+	return $post_types;
+}
+
+/**
+ * Keep collection placements out of the core XML sitemap.
+ *
+ * @param array<string, WP_Taxonomy> $taxonomies Taxonomies included in the sitemap.
+ * @return array<string, WP_Taxonomy>
+ */
+function collections_manager_exclude_sitemap_taxonomies( $taxonomies ) {
+	unset( $taxonomies[ COLLECTIONS_MANAGER_PLACEMENT ] );
+	return $taxonomies;
+}
+
+/**
+ * Register the private collections post type.
+ */
 function collections_manager_register_post_type() {
 	register_post_type(
 		COLLECTIONS_MANAGER_POST_TYPE,

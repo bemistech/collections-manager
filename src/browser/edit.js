@@ -14,6 +14,7 @@ import { useEffect, useState } from '@wordpress/element';
 import apiFetch from '@wordpress/api-fetch';
 import ServerSideRender from '@wordpress/server-side-render';
 import StyleControls from './style-controls';
+import PlacementControl from './placement-control';
 import metadata from './block.json';
 
 const PICKER_PATH = '/collections-manager/v1/picker';
@@ -56,7 +57,8 @@ const VISIBLE_OPTIONS = [
 
 export default function Edit( { attributes, setAttributes } ) {
 	const blockProps = useBlockProps();
-	const { showAllCollections, collectionIds, visibleCount } = attributes;
+	const { showAllCollections, collectionIds, visibleCount, placement } = attributes;
+	const placementSlug = typeof placement === 'string' ? placement : '';
 	const selectedIds = Array.isArray( collectionIds ) ? collectionIds : [];
 
 	const [ collections, setCollections ] = useState( [] );
@@ -95,6 +97,12 @@ export default function Edit( { attributes, setAttributes } ) {
 	return (
 		<div { ...blockProps }>
 			<InspectorControls>
+				<PanelBody title={ __( 'Placement', 'collections-manager' ) }>
+					<PlacementControl
+						value={ placementSlug }
+						onChange={ ( next ) => setAttributes( { placement: next } ) }
+					/>
+				</PanelBody>
 				<PanelBody title={ __( 'Collections', 'collections-manager' ) }>
 					<SelectControl
 						label={ __( 'Collections in the row', 'collections-manager' ) }
@@ -108,6 +116,15 @@ export default function Edit( { attributes, setAttributes } ) {
 							setAttributes( { visibleCount: parseInt( value, 10 ) || 0 } )
 						}
 					/>
+					{ !! placementSlug && (
+						<p>
+							{ __(
+								'This block shows collections checked for the placement above.',
+								'collections-manager'
+							) }
+						</p>
+					) }
+					{ ! placementSlug && (
 					<ToggleControl
 						label={ __( 'Show all collections', 'collections-manager' ) }
 						help={ __(
@@ -119,7 +136,8 @@ export default function Edit( { attributes, setAttributes } ) {
 							setAttributes( { showAllCollections: value } )
 						}
 					/>
-					{ showAllCollections === false && (
+					) }
+					{ ! placementSlug && showAllCollections === false && (
 						<div className="cm-browser-editor__picks">
 							<p>
 								{ __(
@@ -182,7 +200,12 @@ export default function Edit( { attributes, setAttributes } ) {
 						icon="index-card"
 						label={ metadata.title }
 						instructions={
-							showAllCollections === false && ! selectedIds.length
+							placementSlug
+								? __(
+										'No collections are checked for this placement yet.',
+										'collections-manager'
+								  )
+								: showAllCollections === false && ! selectedIds.length
 								? __(
 										'Turn on Show all collections, or check the collections this block should display.',
 										'collections-manager'

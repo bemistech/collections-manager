@@ -1,6 +1,6 @@
 {
 	"name": "collections-manager",
-  "version": "0.2.3",
+  "version": "0.2.10",
 	"description": "Curated post collections and a streaming-style browser block.",
 	"author": "Bemis Tech",
 	"license": "GPL-2.0-or-later",

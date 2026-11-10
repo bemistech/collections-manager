@@ -43,6 +43,166 @@ function collections_manager_handle_dashboard_actions() {
 	}
 }
 
+/**
+ * Card payload for the collection post picker.
+ *
+ * Term names that match the active filter are listed first.
+ *
+ * @param WP_Post $post      Post object.
+ * @param int[]   $highlight Term IDs the editor is filtering by.
+ * @return array{id:int,title:string,date:string,image:string,terms:string[]}
+ */
+function collections_manager_picker_post_data( $post, $highlight = array() ) {
+	$taxes     = collections_manager_taxonomies_for_post_type( $post->post_type );
+	$highlight = array_map( 'absint', (array) $highlight );
+	$matched   = array();
+	$rest      = array();
+	$prefer    = array( 'category', 'post_tag' );
+	$seen_tax  = array();
+
+	foreach ( array_merge( $prefer, array_keys( $taxes ) ) as $taxonomy ) {
+		if ( isset( $seen_tax[ $taxonomy ] ) || ! isset( $taxes[ $taxonomy ] ) ) {
+			continue;
+		}
+		$seen_tax[ $taxonomy ] = true;
+		$terms = get_the_terms( $post, $taxonomy );
+		if ( ! is_array( $terms ) ) {
+			continue;
+		}
+		foreach ( $terms as $term ) {
+			if ( in_array( (int) $term->term_id, $highlight, true ) ) {
+				$matched[] = $term->name;
+			} else {
+				$rest[] = $term->name;
+			}
+		}
+	}
+
+	$labels = array_slice( array_merge( $matched, $rest ), 0, 2 );
+
+	return array(
+		'id'    => (int) $post->ID,
+		'title' => html_entity_decode( wp_strip_all_tags( get_the_title( $post ) ), ENT_QUOTES, 'UTF-8' ),
+		'date'  => get_the_date( '', $post ),
+		'image' => collections_manager_card_image_url( $post->ID, 'thumbnail' ),
+		'terms' => $labels,
+	);
+}
+
+/**
+ * Date and term line under a picker title.
+ *
+ * @param array{date?:string,terms?:string[]} $data Picker payload.
+ * @return string
+ */
+function collections_manager_picker_meta_text( $data ) {
+	$parts = array();
+	if ( ! empty( $data['date'] ) ) {
+		$parts[] = (string) $data['date'];
+	}
+	if ( ! empty( $data['terms'] ) && is_array( $data['terms'] ) ) {
+		foreach ( $data['terms'] as $term ) {
+			$parts[] = (string) $term;
+		}
+	}
+
+	return implode( ' · ', $parts );
+}
+
+/**
+ * Parse `taxonomy:id,id;taxonomy:id` into a tax query. AND across taxonomies, IN within one.
+ *
+ * @param string $post_type Post type slug.
+ * @param mixed  $raw       Filter string from the picker.
+ * @return array<int|string, mixed>
+ */
+function collections_manager_picker_tax_query( $post_type, $raw ) {
+	$raw = is_string( $raw ) ? $raw : '';
+	if ( strlen( $raw ) > 500 ) {
+		$raw = substr( $raw, 0, 500 );
+	}
+
+	$taxes = collections_manager_taxonomies_for_post_type( $post_type );
+	$query = array( 'relation' => 'AND' );
+
+	foreach ( explode( ';', $raw ) as $piece ) {
+		$piece = trim( $piece );
+		if ( '' === $piece || false === strpos( $piece, ':' ) ) {
+			continue;
+		}
+		$parts = explode( ':', $piece, 2 );
+		if ( count( $parts ) !== 2 ) {
+			continue;
+		}
+		$taxonomy = sanitize_key( $parts[0] );
+		if ( ! isset( $taxes[ $taxonomy ] ) ) {
+			continue;
+		}
+		$ids = array_values( array_unique( array_filter( array_map( 'absint', explode( ',', $parts[1] ) ) ) ) );
+		if ( ! $ids ) {
+			continue;
+		}
+		$query[] = array(
+			'taxonomy'         => $taxonomy,
+			'field'            => 'term_id',
+			'terms'            => $ids,
+			'include_children' => true,
+			'operator'         => 'IN',
+		);
+	}
+
+	return count( $query ) > 1 ? $query : array();
+}
+
+/**
+ * One chosen post in the manual picker. Markup matches the rows built in dashboard.js.
+ *
+ * @param WP_Post $post Post object.
+ */
+function collections_manager_render_selected_post( $post ) {
+	$data = collections_manager_picker_post_data( $post );
+	echo '<li data-id="' . esc_attr( (string) $data['id'] ) . '">';
+	echo '<input type="hidden" name="collection[post_ids][]" value="' . esc_attr( (string) $data['id'] ) . '" />';
+	echo '<button type="button" class="cm-drag" aria-label="' . esc_attr__( 'Drag to reorder', 'collections-manager' ) . '"><span class="dashicons dashicons-move" aria-hidden="true"></span></button>';
+	if ( $data['image'] ) {
+		echo '<img class="cm-thumb" alt="" src="' . esc_url( $data['image'] ) . '" />';
+	} else {
+		echo '<span class="cm-thumb cm-thumb--empty" aria-hidden="true"></span>';
+	}
+	echo '<span class="cm-selected-posts__body">';
+	echo '<span class="cm-selected-posts__title">' . esc_html( $data['title'] ) . '</span>';
+	$meta = collections_manager_picker_meta_text( $data );
+	if ( $meta ) {
+		echo '<span class="cm-selected-posts__meta">' . esc_html( $meta ) . '</span>';
+	}
+	echo '</span>';
+	echo '<button type="button" class="button-link cm-move-up" aria-label="' . esc_attr__( 'Move up', 'collections-manager' ) . '"><span class="dashicons dashicons-arrow-up-alt2" aria-hidden="true"></span></button>';
+	echo '<button type="button" class="button-link cm-move-down" aria-label="' . esc_attr__( 'Move down', 'collections-manager' ) . '"><span class="dashicons dashicons-arrow-down-alt2" aria-hidden="true"></span></button>';
+	echo '<button type="button" class="button-link cm-remove-post" aria-label="' . esc_attr__( 'Remove', 'collections-manager' ) . '"><span class="dashicons dashicons-no-alt" aria-hidden="true"></span></button>';
+	echo '</li>';
+}
+
+/**
+ * Limit picker search to titles. A full content search is much slower on a large site.
+ *
+ * @param string   $where SQL WHERE clause.
+ * @param WP_Query $query Current query.
+ * @return string
+ */
+function collections_manager_picker_title_where( $where, $query ) {
+	if ( ! $query instanceof WP_Query ) {
+		return $where;
+	}
+	$term = $query->get( 'cm_title_search' );
+	if ( ! is_string( $term ) || '' === $term ) {
+		return $where;
+	}
+
+	global $wpdb;
+	$where .= $wpdb->prepare( " AND {$wpdb->posts}.post_title LIKE %s", '%' . $wpdb->esc_like( $term ) . '%' );
+	return $where;
+}
+
 add_action( 'wp_ajax_collections_manager_search_posts', 'collections_manager_ajax_search_posts' );
 function collections_manager_ajax_search_posts() {
 	check_ajax_referer( 'collections_manager_admin' );
@@ -57,28 +217,73 @@ function collections_manager_ajax_search_posts() {
 		$post_type = isset( $types['post'] ) ? 'post' : (string) array_key_first( $types );
 	}
 
-	$search = isset( $_GET['s'] ) ? sanitize_text_field( wp_unslash( $_GET['s'] ) ) : '';
-	$query  = new WP_Query(
-		array(
-			'post_type'      => $post_type ? $post_type : 'post',
-			'post_status'    => 'publish',
-			's'              => $search,
-			'posts_per_page' => 12,
-			'no_found_rows'  => true,
-		)
-	);
-
-	$results = array();
-	foreach ( $query->posts as $post ) {
-		$results[] = array(
-			'id'    => $post->ID,
-			'title' => get_the_title( $post ),
-			'date'  => get_the_date( '', $post ),
-			'image' => collections_manager_card_image_url( $post->ID, 'thumbnail' ),
-		);
+	$search   = isset( $_GET['s'] ) ? sanitize_text_field( wp_unslash( $_GET['s'] ) ) : '';
+	$page     = isset( $_GET['page'] ) ? absint( wp_unslash( $_GET['page'] ) ) : 1;
+	$per_page = isset( $_GET['per_page'] ) ? absint( wp_unslash( $_GET['per_page'] ) ) : 16;
+	if ( $page < 1 ) {
+		$page = 1;
+	}
+	if ( $per_page < 1 ) {
+		$per_page = 16;
+	}
+	if ( $per_page > 40 ) {
+		$per_page = 40;
 	}
 
-	wp_send_json_success( $results );
+	$args = array(
+		'post_type'              => $post_type ? $post_type : 'post',
+		'post_status'            => 'publish',
+		'posts_per_page'         => $per_page + 1,
+		'paged'                  => $page,
+		'orderby'                => 'date',
+		'order'                  => 'DESC',
+		'ignore_sticky_posts'    => true,
+		'no_found_rows'          => true,
+		'update_post_meta_cache' => true,
+		'update_post_term_cache' => true,
+	);
+	if ( '' !== $search ) {
+		$args['cm_title_search'] = $search;
+	}
+
+	$tax_query = collections_manager_picker_tax_query( $post_type, isset( $_GET['taxes'] ) ? wp_unslash( $_GET['taxes'] ) : '' );
+	$highlight = array();
+	if ( $tax_query ) {
+		$args['tax_query'] = $tax_query;
+		foreach ( $tax_query as $clause ) {
+			if ( is_array( $clause ) && ! empty( $clause['terms'] ) ) {
+				$highlight = array_merge( $highlight, array_map( 'absint', (array) $clause['terms'] ) );
+			}
+		}
+	}
+
+	if ( '' !== $search ) {
+		add_filter( 'posts_where', 'collections_manager_picker_title_where', 10, 2 );
+	}
+	$query = new WP_Query( $args );
+	if ( '' !== $search ) {
+		remove_filter( 'posts_where', 'collections_manager_picker_title_where', 10 );
+	}
+	$posts    = is_array( $query->posts ) ? $query->posts : array();
+	$has_more = count( $posts ) > $per_page;
+	if ( $has_more ) {
+		array_pop( $posts );
+	}
+
+	$results = array();
+	foreach ( $posts as $post ) {
+		if ( $post instanceof WP_Post ) {
+			$results[] = collections_manager_picker_post_data( $post, $highlight );
+		}
+	}
+
+	wp_send_json_success(
+		array(
+			'posts'    => $results,
+			'page'     => $page,
+			'has_more' => $has_more,
+		)
+	);
 }
 
 add_action( 'wp_ajax_collections_manager_query_terms', 'collections_manager_ajax_query_terms' );
@@ -89,33 +294,70 @@ function collections_manager_ajax_query_terms() {
 		wp_send_json_error( array( 'message' => 'forbidden' ), 403 );
 	}
 
-	$post_type = isset( $_GET['post_type'] ) ? sanitize_key( wp_unslash( $_GET['post_type'] ) ) : 'post';
-	$taxonomy  = isset( $_GET['taxonomy'] ) ? sanitize_key( wp_unslash( $_GET['taxonomy'] ) ) : '';
-	$taxes     = collections_manager_taxonomies_for_post_type( $post_type );
+	$post_type  = isset( $_GET['post_type'] ) ? sanitize_key( wp_unslash( $_GET['post_type'] ) ) : 'post';
+	$taxonomy   = isset( $_GET['taxonomy'] ) ? sanitize_key( wp_unslash( $_GET['taxonomy'] ) ) : '';
+	$search     = isset( $_GET['s'] ) ? sanitize_text_field( wp_unslash( $_GET['s'] ) ) : '';
+	$hide_empty = ! empty( $_GET['hide_empty'] );
+	$taxes      = collections_manager_taxonomies_for_post_type( $post_type );
+	$empty      = array(
+		'terms'     => array(),
+		'truncated' => false,
+	);
 	if ( ! $taxonomy || ! isset( $taxes[ $taxonomy ] ) ) {
-		wp_send_json_success( array() );
+		wp_send_json_success( $empty );
 	}
 
-	$terms = get_terms(
+	$count = wp_count_terms(
 		array(
 			'taxonomy'   => $taxonomy,
-			'hide_empty' => false,
+			'hide_empty' => $hide_empty,
 		)
 	);
+	$count = is_wp_error( $count ) ? 0 : (int) $count;
+
+	$args = array(
+		'taxonomy'   => $taxonomy,
+		'hide_empty' => $hide_empty,
+		'orderby'    => 'name',
+		'order'      => 'ASC',
+	);
+
+	$truncated = false;
+	if ( '' !== $search ) {
+		$args['search'] = $search;
+		$args['number'] = 30;
+	} elseif ( $count > 200 ) {
+		$args['number']  = 20;
+		$args['orderby'] = 'count';
+		$args['order']   = 'DESC';
+		$truncated       = true;
+	}
+
+	$terms = get_terms( $args );
 	if ( is_wp_error( $terms ) ) {
-		wp_send_json_success( array() );
+		wp_send_json_success( $empty );
 	}
 
 	$results = array();
 	foreach ( $terms as $term ) {
 		$results[] = array(
-			'id'    => (int) $term->term_id,
-			'name'  => $term->name,
-			'count' => (int) $term->count,
+			'id'     => (int) $term->term_id,
+			'name'   => $term->name,
+			'count'  => (int) $term->count,
+			'parent' => (int) $term->parent,
 		);
 	}
 
-	wp_send_json_success( $results );
+	if ( '' !== $search && count( $results ) >= 30 ) {
+		$truncated = true;
+	}
+
+	wp_send_json_success(
+		array(
+			'terms'     => $results,
+			'truncated' => $truncated,
+		)
+	);
 }
 
 add_action( 'wp_ajax_collections_manager_youtube_resolve_channel', 'collections_manager_ajax_youtube_resolve_channel' );
@@ -275,6 +517,13 @@ function collections_manager_enqueue_dashboard_assets( $hook ) {
 
 	$tab = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'overview';
 
+	wp_enqueue_style(
+		'collections-manager-dashboard',
+		COLLECTIONS_MANAGER_URL . 'assets/dashboard.css',
+		array(),
+		COLLECTIONS_MANAGER_VERSION
+	);
+
 	if ( 'styles' === $tab ) {
 		wp_enqueue_style(
 			'collections-manager-browser',
@@ -285,7 +534,7 @@ function collections_manager_enqueue_dashboard_assets( $hook ) {
 		wp_enqueue_style(
 			'collections-manager-styles-admin',
 			COLLECTIONS_MANAGER_URL . 'assets/styles-admin.css',
-			array( 'collections-manager-browser' ),
+			array( 'collections-manager-dashboard', 'collections-manager-browser' ),
 			COLLECTIONS_MANAGER_VERSION
 		);
 		wp_enqueue_script(
@@ -298,31 +547,21 @@ function collections_manager_enqueue_dashboard_assets( $hook ) {
 		return;
 	}
 
-	if ( 'settings' === $tab ) {
-		wp_enqueue_style(
-			'collections-manager-dashboard',
-			COLLECTIONS_MANAGER_URL . 'assets/dashboard.css',
-			array(),
-			COLLECTIONS_MANAGER_VERSION
-		);
+	if ( 'settings' === $tab || 'collections' !== $tab ) {
 		return;
 	}
 
-	if ( 'collections' !== $tab ) {
+	// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only screen state.
+	$editing = isset( $_GET['collection'] ) && '' !== sanitize_text_field( wp_unslash( $_GET['collection'] ) );
+	if ( ! $editing ) {
 		return;
 	}
 
 	wp_enqueue_media();
-	wp_enqueue_style(
-		'collections-manager-dashboard',
-		COLLECTIONS_MANAGER_URL . 'assets/dashboard.css',
-		array(),
-		COLLECTIONS_MANAGER_VERSION
-	);
 	wp_enqueue_script(
 		'collections-manager-dashboard',
 		COLLECTIONS_MANAGER_URL . 'assets/dashboard.js',
-		array( 'jquery' ),
+		array( 'jquery', 'jquery-ui-sortable' ),
 		COLLECTIONS_MANAGER_VERSION,
 		true
 	);
@@ -343,18 +582,101 @@ function collections_manager_enqueue_dashboard_assets( $hook ) {
 			'postTypes' => $post_types,
 			'hasApiKey' => \CollectionsManager\YouTube\Client::has_api_key(),
 			'i18n'      => array(
-				'noVideos'     => __( 'No videos found for that channel.', 'collections-manager' ),
-				'addChannel'   => __( 'Add a channel first.', 'collections-manager' ),
+				'noVideos'       => __( 'No videos found for that channel.', 'collections-manager' ),
+				'addChannel'     => __( 'Add a channel first.', 'collections-manager' ),
 				'previewOk'      => __( 'Found %d videos. Newest first.', 'collections-manager' ),
 				'previewEmpty'   => __( 'No public videos found.', 'collections-manager' ),
 				'playlistsEmpty' => __( 'No public playlists on that channel. Paste a playlist URL instead.', 'collections-manager' ),
-				'feedOk'       => __( 'Found %d items.', 'collections-manager' ),
-				'feedEmpty'    => __( 'No items found at that URL.', 'collections-manager' ),
-				'feedRest'     => __( 'WordPress site detected. Choose a post type or category, then check the feed.', 'collections-manager' ),
-				'feedRss'      => __( 'XML feed detected. Check the feed to preview items.', 'collections-manager' ),
+				'feedOk'         => __( 'Found %d items.', 'collections-manager' ),
+				'feedEmpty'      => __( 'No items found at that URL.', 'collections-manager' ),
+				'feedRest'       => __( 'WordPress site detected. Choose a post type or category, then check the feed.', 'collections-manager' ),
+				'feedRss'        => __( 'XML feed detected. Check the feed to preview items.', 'collections-manager' ),
+				/* translators: %s: taxonomy label, such as Categories. */
+				'allTax'         => __( 'All %s', 'collections-manager' ),
+				/* translators: %s: taxonomy label. */
+				'searchTax'      => __( 'Search %s…', 'collections-manager' ),
+				'add'            => __( 'Add', 'collections-manager' ),
+				'added'          => __( 'Added', 'collections-manager' ),
+				'remove'         => __( 'Remove', 'collections-manager' ),
+				'moveUp'         => __( 'Move up', 'collections-manager' ),
+				'moveDown'       => __( 'Move down', 'collections-manager' ),
+				'drag'           => __( 'Drag to reorder', 'collections-manager' ),
+				'noPosts'        => __( 'No posts match.', 'collections-manager' ),
+				'noTerms'        => __( 'No matches.', 'collections-manager' ),
+				'loading'        => __( 'Loading…', 'collections-manager' ),
+				'searching'      => __( 'Searching…', 'collections-manager' ),
+				'loadError'      => __( 'Could not load posts.', 'collections-manager' ),
+				'newest'         => __( 'Newest first. Click a post to add or remove it.', 'collections-manager' ),
+				'addMatching'    => __( 'Add matching posts', 'collections-manager' ),
+				'addMore'        => __( 'Add more matches', 'collections-manager' ),
+				/* translators: %d: number of posts added. */
+				'addedCount'     => __( 'Added %d posts.', 'collections-manager' ),
+				'alreadyIn'      => __( 'Those posts are already in the collection.', 'collections-manager' ),
+				'clearConfirm'   => __( 'Remove every selected post from this collection?', 'collections-manager' ),
+				'typeMore'       => __( 'Type at least 2 letters to search.', 'collections-manager' ),
+				'popularHint'    => __( 'Showing popular terms. Type to search the rest.', 'collections-manager' ),
+				'previewNewest'  => __( 'Newest matches', 'collections-manager' ),
+				'previewMore'    => __( 'More posts match than shown here.', 'collections-manager' ),
+				'previewAll'     => __( 'No category or tag selected, so this is every published item of this type.', 'collections-manager' ),
 			),
 		)
 	);
+}
+
+/**
+ * Checkboxes for named block slots.
+ *
+ * @param int $collection_id Collection being edited, or 0 for a new one.
+ */
+function collections_manager_render_placement_checkboxes( $collection_id ) {
+	$selected = $collection_id ? wp_get_object_terms( $collection_id, COLLECTIONS_MANAGER_PLACEMENT, array( 'fields' => 'ids' ) ) : array();
+	$selected = is_wp_error( $selected ) ? array() : array_map( 'intval', $selected );
+	$placements = get_terms(
+		array(
+			'taxonomy'   => COLLECTIONS_MANAGER_PLACEMENT,
+			'hide_empty' => false,
+		)
+	);
+
+	if ( is_wp_error( $placements ) || empty( $placements ) ) {
+		echo '<p>' . esc_html__( 'No placements yet. Create one from a Collections Browser block.', 'collections-manager' ) . '</p>';
+		return;
+	}
+
+	echo '<fieldset class="cm-checks" aria-labelledby="cm-placements-label">';
+	foreach ( $placements as $placement ) {
+		$label = $placement->name;
+		if ( ! \CollectionsManager\PlacementUsage::is_active( $placement ) ) {
+			$label .= ' (' . __( 'inactive', 'collections-manager' ) . ')';
+		}
+		echo '<label>';
+		echo '<input type="checkbox" name="collection[placements][]" value="' . esc_attr( (string) $placement->term_id ) . '" ' . checked( in_array( (int) $placement->term_id, $selected, true ), true, false ) . ' /> ';
+		echo esc_html( $label );
+		echo '</label>';
+	}
+	echo '</fieldset>';
+	echo '<p class="description">' . esc_html__( 'Checked collections show in blocks that use that placement. Inactive means no saved block currently uses it.', 'collections-manager' ) . '</p>';
+}
+
+/**
+ * Assign the collection to the checked placements.
+ *
+ * @param int   $collection_id Collection ID.
+ * @param mixed $raw_ids       Posted term IDs.
+ */
+function collections_manager_save_placements( $collection_id, $raw_ids ) {
+	$term_ids = array();
+	foreach ( array_map( 'absint', (array) $raw_ids ) as $term_id ) {
+		if ( ! $term_id ) {
+			continue;
+		}
+		$term = get_term( $term_id, COLLECTIONS_MANAGER_PLACEMENT );
+		if ( $term && ! is_wp_error( $term ) ) {
+			$term_ids[] = (int) $term->term_id;
+		}
+	}
+
+	wp_set_object_terms( $collection_id, $term_ids, COLLECTIONS_MANAGER_PLACEMENT );
 }
 
 function collections_manager_save_collection() {
@@ -383,7 +705,7 @@ function collections_manager_save_collection() {
 	$collection_id = absint( $input['id'] ?? 0 );
 
 	if ( '' === $title ) {
-		wp_safe_redirect( collections_manager_dashboard_url( array( 'tab' => 'collections', 'error' => 'missing-title', 'collection' => $collection_id ) ) );
+		wp_safe_redirect( collections_manager_dashboard_url( array( 'tab' => 'collections', 'error' => 'missing-title', 'collection' => $collection_id ? $collection_id : 'new' ) ) );
 		exit;
 	}
 
@@ -405,7 +727,7 @@ function collections_manager_save_collection() {
 
 	$saved_id = wp_insert_post( $postarr, true );
 	if ( is_wp_error( $saved_id ) || ! $saved_id ) {
-		wp_safe_redirect( collections_manager_dashboard_url( array( 'tab' => 'collections', 'error' => 'save-failed', 'collection' => $collection_id ) ) );
+		wp_safe_redirect( collections_manager_dashboard_url( array( 'tab' => 'collections', 'error' => 'save-failed', 'collection' => $collection_id ? $collection_id : 'new' ) ) );
 		exit;
 	}
 
@@ -420,6 +742,8 @@ function collections_manager_save_collection() {
 	} else {
 		delete_post_thumbnail( $saved_id );
 	}
+
+	collections_manager_save_placements( $saved_id, $input['placements'] ?? array() );
 
 	wp_safe_redirect( collections_manager_dashboard_url( array( 'tab' => 'collections', 'updated' => 'saved' ) ) );
 	exit;
@@ -448,7 +772,7 @@ function collections_manager_render_dashboard_page() {
 	}
 
 	$tab = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'overview';
-	if ( ! in_array( $tab, array( 'overview', 'collections', 'styles', 'settings', 'how-to-use' ), true ) ) {
+	if ( ! in_array( $tab, array( 'overview', 'collections', 'placements', 'styles', 'settings', 'how-to-use' ), true ) ) {
 		$tab = 'overview';
 	}
 
@@ -459,6 +783,7 @@ function collections_manager_render_dashboard_page() {
 	$tabs = array(
 		'overview'     => __( 'Overview', 'collections-manager' ),
 		'collections'  => __( 'Collections', 'collections-manager' ),
+		'placements'   => __( 'Placements', 'collections-manager' ),
 		'styles'       => __( 'Styles', 'collections-manager' ),
 		'settings'     => __( 'Settings', 'collections-manager' ),
 		'how-to-use'   => __( 'How to Use', 'collections-manager' ),
@@ -475,6 +800,8 @@ function collections_manager_render_dashboard_page() {
 
 	if ( 'collections' === $tab ) {
 		collections_manager_render_collections_tab();
+	} elseif ( 'placements' === $tab ) {
+		\CollectionsManager\Placements::render_admin_tab();
 	} elseif ( 'styles' === $tab ) {
 		\CollectionsManager\Admin\StylesPage::render();
 	} elseif ( 'settings' === $tab ) {
@@ -512,81 +839,106 @@ function collections_manager_render_notices() {
 }
 
 function collections_manager_render_overview_tab() {
-	$collections = collections_manager_get_collections();
-	echo '<p style="margin-top:20px;">' . esc_html__( 'Curated groups of posts — Most Popular, Park Guides, Festivals, and anything else you want readers to browse without leaving the page.', 'collections-manager' ) . '</p>';
-	echo '<p>';
-	printf(
-		'<a class="button button-primary" href="%s">%s</a> ',
-		esc_url( collections_manager_dashboard_url( array( 'tab' => 'collections', 'collection' => 'new' ) ) ),
-		esc_html__( 'Add collection', 'collections-manager' )
-	);
-	printf(
-		'<a class="button" href="%s">%s</a>',
-		esc_url( collections_manager_dashboard_url( array( 'tab' => 'collections' ) ) ),
-		esc_html__( 'Manage collections', 'collections-manager' )
-	);
-	echo '</p>';
-
-	echo '<table class="widefat striped" style="max-width:760px;margin-top:16px;"><thead><tr>';
-	echo '<th>' . esc_html__( 'Collection', 'collections-manager' ) . '</th>';
-	echo '<th>' . esc_html__( 'Items', 'collections-manager' ) . '</th>';
-	echo '<th>' . esc_html__( 'Order', 'collections-manager' ) . '</th>';
-	echo '</tr></thead><tbody>';
-
-	if ( empty( $collections ) ) {
-		echo '<tr><td colspan="3">' . esc_html__( 'No collections yet.', 'collections-manager' ) . '</td></tr>';
-	} else {
-		foreach ( $collections as $collection ) {
-			$edit = collections_manager_dashboard_url( array( 'tab' => 'collections', 'collection' => $collection->ID ) );
-			echo '<tr>';
-			printf( '<td><a href="%s"><strong>%s</strong></a></td>', esc_url( $edit ), esc_html( get_the_title( $collection ) ) );
-			echo '<td>' . esc_html( (string) collections_manager_collection_item_count( $collection->ID ) ) . '</td>';
-			echo '<td>' . esc_html( (string) $collection->menu_order ) . '</td>';
-			echo '</tr>';
-		}
-	}
-	echo '</tbody></table>';
+	echo '<div class="cm-screen">';
+	echo '<p class="cm-lead">' . esc_html__( 'Curated groups of posts. Add a collection, then place it with the Collections Browser block.', 'collections-manager' ) . '</p>';
+	collections_manager_render_collections_toolbar();
+	collections_manager_render_collections_table();
+	echo '</div>';
 }
 
 function collections_manager_render_how_to_use_tab() {
-	echo '<div style="max-width:760px;margin-top:20px;">';
-	echo '<ol style="list-style:decimal;margin-left:1.2em;">';
+	echo '<div class="cm-screen">';
+	echo '<div class="cm-dash-card">';
+	echo '<h2>' . esc_html__( 'How to use', 'collections-manager' ) . '</h2>';
+	echo '<ol class="cm-steps">';
 	echo '<li>' . esc_html__( 'Create a collection and give it a name. Add a custom cover only if you do not want the latest item’s image.', 'collections-manager' ) . '</li>';
-	echo '<li>' . esc_html__( 'Choose how items are added: pick WordPress items by hand, pull from a local post type and category, load a remote WordPress site or XML feed (for example podcasts.wdwnt.com), or use a YouTube playlist or videos.', 'collections-manager' ) . '</li>';
+	echo '<li>' . esc_html__( 'Choose how items are added: browse and click posts (filter by a category or tag when you want a group), pull the latest posts from a category or tag, load a remote WordPress site or XML feed (for example podcasts.wdwnt.com), or use a YouTube playlist or videos.', 'collections-manager' ) . '</li>';
 	echo '<li>' . esc_html__( 'For a remote site, paste the homepage (WordPress REST is used when available) or an RSS/Atom URL such as a category feed. Optional category filters apply to WordPress REST sources.', 'collections-manager' ) . '</li>';
 	echo '<li>' . esc_html__( 'For YouTube, add a channel, then choose latest uploads, a playlist from that channel, or specific videos. Listing playlists and browsing beyond the public RSS feed needs a Data API key under Collections → Settings (or COLLECTIONS_MANAGER_YOUTUBE_API_KEY in wp-config.php).', 'collections-manager' ) . '</li>';
 	echo '<li>' . esc_html__( 'Lower order numbers appear first in the Collections Browser row.', 'collections-manager' ) . '</li>';
-	echo '<li>' . esc_html__( 'Insert the Collections Browser block. Readers tap a collection to open its carousel underneath — they stay on the page.', 'collections-manager' ) . '</li>';
+	echo '<li>' . esc_html__( 'Insert the Collections Browser block. Create or choose a named placement when the page needs its own slot, then check that placement on each collection. Leave the placement empty to pick collections on the block instead. Readers tap a collection to open its carousel underneath — they stay on the page.', 'collections-manager' ) . '</li>';
 	echo '<li>' . esc_html__( 'Set site-wide spacing, shadows, slider box, and colors under Collections → Styles. Those inherit the active theme unless you pick a palette or custom color.', 'collections-manager' ) . '</li>';
 	echo '<li>' . esc_html__( 'In the block sidebar, leave “Use global styles” on, or turn it off to style only that block.', 'collections-manager' ) . '</li>';
-	echo '</ol></div>';
+	echo '</ol></div></div>';
 }
 
 function collections_manager_render_collections_tab() {
+	// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only screen state.
 	$edit_id = isset( $_GET['collection'] ) ? sanitize_text_field( wp_unslash( $_GET['collection'] ) ) : '';
 	$post    = null;
+	$editing = false;
 	if ( 'new' === $edit_id ) {
-		$post = null;
-	} elseif ( $edit_id ) {
+		$editing = true;
+	} elseif ( '' !== $edit_id && absint( $edit_id ) ) {
 		$post = get_post( absint( $edit_id ) );
-		if ( ! $post || COLLECTIONS_MANAGER_POST_TYPE !== $post->post_type ) {
-			$post = null;
+		if ( $post && COLLECTIONS_MANAGER_POST_TYPE === $post->post_type ) {
+			$editing = true;
 		}
 	}
 
-	collections_manager_render_collection_form( $post );
+	echo '<div class="cm-screen">';
+	if ( $editing ) {
+		printf(
+			'<p class="cm-back"><a href="%s">%s</a></p>',
+			esc_url( collections_manager_dashboard_url( array( 'tab' => 'collections' ) ) ),
+			esc_html__( '← All collections', 'collections-manager' )
+		);
+		collections_manager_render_collection_form( $post );
+		echo '</div>';
+		return;
+	}
 
+	echo '<p class="cm-lead">' . esc_html__( 'Each collection is a row of stories. Source is how those stories are chosen.', 'collections-manager' ) . '</p>';
+	collections_manager_render_collections_toolbar();
+	collections_manager_render_collections_table();
+	echo '</div>';
+}
+
+/**
+ * Short label for how a collection is filled.
+ *
+ * @param string $source Source key.
+ * @return string
+ */
+function collections_manager_source_label( $source ) {
+	$labels = array(
+		'manual'  => __( 'Chosen posts', 'collections-manager' ),
+		'query'   => __( 'Latest posts', 'collections-manager' ),
+		'youtube' => __( 'YouTube', 'collections-manager' ),
+		'feed'    => __( 'Feed', 'collections-manager' ),
+	);
+
+	return isset( $labels[ $source ] ) ? $labels[ $source ] : $labels['manual'];
+}
+
+/**
+ * Add button shared by the overview and the collections list.
+ */
+function collections_manager_render_collections_toolbar() {
+	echo '<div class="cm-toolbar">';
+	printf(
+		'<a class="button button-primary" href="%s">%s</a>',
+		esc_url( collections_manager_dashboard_url( array( 'tab' => 'collections', 'collection' => 'new' ) ) ),
+		esc_html__( 'Add collection', 'collections-manager' )
+	);
+	echo '</div>';
+}
+
+/**
+ * Collection list used on the overview and the collections tab.
+ */
+function collections_manager_render_collections_table() {
 	$collections = collections_manager_get_collections();
-	echo '<h2>' . esc_html__( 'All collections', 'collections-manager' ) . '</h2>';
-	echo '<table class="widefat striped"><thead><tr>';
+	echo '<table class="widefat striped cm-table"><thead><tr>';
 	echo '<th>' . esc_html__( 'Name', 'collections-manager' ) . '</th>';
+	echo '<th>' . esc_html__( 'Source', 'collections-manager' ) . '</th>';
 	echo '<th>' . esc_html__( 'Items', 'collections-manager' ) . '</th>';
 	echo '<th>' . esc_html__( 'Order', 'collections-manager' ) . '</th>';
 	echo '<th>' . esc_html__( 'Actions', 'collections-manager' ) . '</th>';
 	echo '</tr></thead><tbody>';
 
 	if ( empty( $collections ) ) {
-		echo '<tr><td colspan="4">' . esc_html__( 'No collections yet.', 'collections-manager' ) . '</td></tr>';
+		echo '<tr><td colspan="5">' . esc_html__( 'No collections yet.', 'collections-manager' ) . '</td></tr>';
 	} else {
 		foreach ( $collections as $collection ) {
 			$edit  = collections_manager_dashboard_url( array( 'tab' => 'collections', 'collection' => $collection->ID ) );
@@ -596,15 +948,15 @@ function collections_manager_render_collections_tab() {
 			);
 			echo '<tr>';
 			printf( '<td><a href="%s"><strong>%s</strong></a></td>', esc_url( $edit ), esc_html( get_the_title( $collection ) ) );
+			echo '<td>' . esc_html( collections_manager_source_label( collections_manager_get_source( $collection->ID ) ) ) . '</td>';
 			echo '<td>' . esc_html( (string) collections_manager_collection_item_count( $collection->ID ) ) . '</td>';
 			echo '<td>' . esc_html( (string) $collection->menu_order ) . '</td>';
-			echo '<td>';
+			echo '<td><span class="cm-row-actions">';
 			printf( '<a href="%s">%s</a>', esc_url( $edit ), esc_html__( 'Edit', 'collections-manager' ) );
 			if ( current_user_can( 'delete_post', $collection->ID ) ) {
-				echo ' | ';
 				printf( '<a class="submitdelete" href="%s">%s</a>', esc_url( $trash ), esc_html__( 'Trash', 'collections-manager' ) );
 			}
-			echo '</td></tr>';
+			echo '</span></td></tr>';
 		}
 	}
 	echo '</tbody></table>';
@@ -633,58 +985,64 @@ function collections_manager_render_collection_form( $post = null ) {
 	$query_taxes    = collections_manager_taxonomies_for_post_type( $query['post_type'] );
 	$matched_count  = $is_edit && in_array( $source, array( 'query', 'youtube', 'feed' ), true ) ? collections_manager_collection_item_count( $post->ID ) : null;
 
-	echo '<div class="cm-dash-card">';
+	echo '<div class="cm-dash-card cm-dash-card--editor">';
 	echo '<h2>' . esc_html( $is_edit ? __( 'Edit collection', 'collections-manager' ) : __( 'Add collection', 'collections-manager' ) ) . '</h2>';
-	echo '<form method="post" action="' . esc_url( collections_manager_dashboard_url( array( 'tab' => 'collections' ) ) ) . '">';
+	echo '<form id="cm-collection-form" method="post" action="' . esc_url( collections_manager_dashboard_url( array( 'tab' => 'collections' ) ) ) . '">';
 	wp_nonce_field( 'collections_manager_save' );
 	if ( $is_edit ) {
 		echo '<input type="hidden" name="collection[id]" value="' . esc_attr( (string) $post->ID ) . '" />';
 	}
 	?>
-	<table class="form-table" role="presentation">
-		<tr>
-			<th scope="row"><label for="cm-title"><?php esc_html_e( 'Name', 'collections-manager' ); ?></label></th>
-			<td><input name="collection[title]" id="cm-title" type="text" class="regular-text" required value="<?php echo esc_attr( $title ); ?>" /></td>
-		</tr>
-		<tr>
-			<th scope="row"><label for="cm-description"><?php esc_html_e( 'Short description', 'collections-manager' ); ?></label></th>
-			<td><textarea name="collection[description]" id="cm-description" class="large-text" rows="2"><?php echo esc_textarea( $desc ); ?></textarea></td>
-		</tr>
-		<tr>
-			<th scope="row"><label for="cm-order"><?php esc_html_e( 'Display order', 'collections-manager' ); ?></label></th>
-			<td>
+	<div class="cm-editor__details">
+		<div class="cm-editor__primary">
+			<p class="cm-field">
+				<label for="cm-title"><?php esc_html_e( 'Name', 'collections-manager' ); ?></label>
+				<input name="collection[title]" id="cm-title" type="text" required value="<?php echo esc_attr( $title ); ?>" />
+			</p>
+			<p class="cm-field">
+				<label for="cm-description"><?php esc_html_e( 'Short description', 'collections-manager' ); ?></label>
+				<textarea name="collection[description]" id="cm-description" rows="3"><?php echo esc_textarea( $desc ); ?></textarea>
+			</p>
+			<p class="cm-field">
+				<label for="cm-order"><?php esc_html_e( 'Display order', 'collections-manager' ); ?></label>
 				<input name="collection[menu_order]" id="cm-order" type="number" class="small-text" value="<?php echo esc_attr( (string) $order ); ?>" />
-				<p class="description"><?php esc_html_e( 'Lower numbers appear first in the browser row.', 'collections-manager' ); ?></p>
-			</td>
-		</tr>
-		<tr>
-			<th scope="row"><?php esc_html_e( 'Cover image', 'collections-manager' ); ?></th>
-			<td>
+				<span class="description"><?php esc_html_e( 'Lower numbers appear first in the browser row.', 'collections-manager' ); ?></span>
+			</p>
+			<div class="cm-field">
+				<span class="cm-field__label" id="cm-placements-label"><?php esc_html_e( 'Placements', 'collections-manager' ); ?></span>
+				<?php collections_manager_render_placement_checkboxes( $is_edit ? $post->ID : 0 ); ?>
+			</div>
+		</div>
+		<div class="cm-editor__aside">
+			<div class="cm-field">
+				<span class="cm-field__label" id="cm-cover-label"><?php esc_html_e( 'Cover image', 'collections-manager' ); ?></span>
 				<input type="hidden" name="collection[image_id]" id="cm-image-id" value="<?php echo esc_attr( (string) $image ); ?>" />
 				<div class="cm-image-preview">
 					<?php
 					if ( $image ) {
-						echo wp_get_attachment_image( $image, 'medium', false, array( 'style' => 'max-width:240px;height:auto;display:block;' ) );
+						echo wp_get_attachment_image( $image, 'medium' );
 					}
 					?>
 				</div>
-				<button type="button" class="button cm-select-image"><?php esc_html_e( 'Select image', 'collections-manager' ); ?></button>
-				<button type="button" class="button-link cm-remove-image" <?php echo $image ? '' : 'hidden'; ?>><?php esc_html_e( 'Remove', 'collections-manager' ); ?></button>
+				<p class="cm-inline-actions">
+					<button type="button" class="button cm-select-image"><?php esc_html_e( 'Select image', 'collections-manager' ); ?></button>
+					<button type="button" class="button-link cm-remove-image" <?php echo $image ? '' : 'hidden'; ?>><?php esc_html_e( 'Remove', 'collections-manager' ); ?></button>
+				</p>
 				<p class="description"><?php esc_html_e( 'Optional. Without a custom cover, the collection uses the latest item’s image.', 'collections-manager' ); ?></p>
-			</td>
-		</tr>
-		<tr>
-			<th scope="row"><?php esc_html_e( 'Items', 'collections-manager' ); ?></th>
-			<td>
+			</div>
+		</div>
+	</div>
+	<div class="cm-editor__items">
+		<h3><?php esc_html_e( 'Items', 'collections-manager' ); ?></h3>
 				<fieldset class="cm-source-toggle">
 					<legend class="screen-reader-text"><?php esc_html_e( 'How this collection gets items', 'collections-manager' ); ?></legend>
 					<label>
 						<input type="radio" name="collection[source]" value="manual" <?php checked( $source, 'manual' ); ?> />
-						<?php esc_html_e( 'Pick items manually', 'collections-manager' ); ?>
+						<?php esc_html_e( 'Choose posts', 'collections-manager' ); ?>
 					</label>
 					<label>
 						<input type="radio" name="collection[source]" value="query" <?php checked( $source, 'query' ); ?> />
-						<?php esc_html_e( 'From post type and category', 'collections-manager' ); ?>
+						<?php esc_html_e( 'Latest from a category or tag', 'collections-manager' ); ?>
 					</label>
 					<label>
 						<input type="radio" name="collection[source]" value="youtube" <?php checked( $source, 'youtube' ); ?> />
@@ -696,29 +1054,51 @@ function collections_manager_render_collection_form( $post = null ) {
 					</label>
 				</fieldset>
 
-				<div id="cm-panel-manual" class="cm-source-panel" <?php echo 'manual' === $source ? '' : 'hidden'; ?>>
-					<div class="cm-search-row">
-						<label for="cm-manual-post-type" class="screen-reader-text"><?php esc_html_e( 'Post type to search', 'collections-manager' ); ?></label>
+				<div id="cm-panel-manual" class="cm-source-panel cm-picker" <?php echo 'manual' === $source ? '' : 'hidden'; ?>>
+					<div class="cm-picker__filters">
+						<label for="cm-manual-post-type" class="screen-reader-text"><?php esc_html_e( 'Post type', 'collections-manager' ); ?></label>
 						<select id="cm-manual-post-type">
 							<?php foreach ( $post_types as $slug => $label ) : ?>
 								<option value="<?php echo esc_attr( $slug ); ?>"><?php echo esc_html( $label ); ?></option>
 							<?php endforeach; ?>
 						</select>
-						<input type="search" id="cm-post-search" class="regular-text" placeholder="<?php esc_attr_e( 'Search…', 'collections-manager' ); ?>" autocomplete="off" />
+						<div id="cm-picker-taxes" class="cm-picker__taxes"></div>
+						<label for="cm-post-search" class="screen-reader-text"><?php esc_html_e( 'Search posts', 'collections-manager' ); ?></label>
+						<span class="cm-search-field" id="cm-post-search-wrap">
+							<input type="search" id="cm-post-search" placeholder="<?php esc_attr_e( 'Search posts…', 'collections-manager' ); ?>" autocomplete="off" />
+							<span class="cm-spinner" aria-hidden="true"></span>
+						</span>
 					</div>
-					<ul class="cm-search-results" id="cm-search-results" hidden></ul>
-					<ul class="cm-selected-posts" id="cm-selected-posts">
-						<?php foreach ( $selected_posts as $item ) : ?>
-							<li data-id="<?php echo esc_attr( (string) $item->ID ); ?>">
-								<input type="hidden" name="collection[post_ids][]" value="<?php echo esc_attr( (string) $item->ID ); ?>" />
-								<span class="cm-selected-posts__title"><?php echo esc_html( get_the_title( $item ) ); ?></span>
-								<button type="button" class="button-link cm-move-up"><?php esc_html_e( 'Up', 'collections-manager' ); ?></button>
-								<button type="button" class="button-link cm-move-down"><?php esc_html_e( 'Down', 'collections-manager' ); ?></button>
-								<button type="button" class="button-link cm-remove-post"><?php esc_html_e( 'Remove', 'collections-manager' ); ?></button>
-							</li>
-						<?php endforeach; ?>
-					</ul>
-					<p class="description"><?php esc_html_e( 'Order here is the order in the carousel.', 'collections-manager' ); ?></p>
+					<div class="cm-picker__layout">
+						<section class="cm-picker__browse" aria-label="<?php esc_attr_e( 'Posts', 'collections-manager' ); ?>">
+							<div class="cm-picker__head">
+								<strong><?php esc_html_e( 'Posts', 'collections-manager' ); ?></strong>
+								<button type="button" class="button" id="cm-add-matching" hidden><?php esc_html_e( 'Add matching posts', 'collections-manager' ); ?></button>
+							</div>
+							<ul class="cm-picker__results" id="cm-search-results"></ul>
+							<div class="cm-picker__footer">
+								<button type="button" class="button" id="cm-load-more" hidden><?php esc_html_e( 'Load more', 'collections-manager' ); ?></button>
+								<p class="description" id="cm-picker-status" role="status"></p>
+							</div>
+						</section>
+						<section class="cm-picker__selected" aria-label="<?php esc_attr_e( 'In this collection', 'collections-manager' ); ?>">
+							<div class="cm-picker__head">
+								<strong>
+									<?php esc_html_e( 'In this collection', 'collections-manager' ); ?>
+									<span id="cm-selected-count"><?php echo esc_html( (string) count( $selected_posts ) ); ?></span>
+								</strong>
+								<button type="button" class="button-link" id="cm-clear-selected"><?php esc_html_e( 'Clear', 'collections-manager' ); ?></button>
+							</div>
+							<p class="cm-picker__empty" id="cm-selected-empty" <?php echo $selected_posts ? 'hidden' : ''; ?>><?php esc_html_e( 'Click a post to add it. The top of this list is the first slide.', 'collections-manager' ); ?></p>
+							<ul class="cm-selected-posts" id="cm-selected-posts">
+								<?php foreach ( $selected_posts as $item ) : ?>
+									<?php collections_manager_render_selected_post( $item ); ?>
+								<?php endforeach; ?>
+							</ul>
+							<p class="description"><?php esc_html_e( 'Drag to set the carousel order.', 'collections-manager' ); ?></p>
+						</section>
+					</div>
+					<p class="description"><?php esc_html_e( 'Filter by a category or tag, then add the posts you want. For a collection that updates when new posts are published, use Latest from a category or tag.', 'collections-manager' ); ?></p>
 				</div>
 
 				<div id="cm-panel-query" class="cm-source-panel" <?php echo 'query' === $source ? '' : 'hidden'; ?>>
@@ -731,7 +1111,7 @@ function collections_manager_render_collection_form( $post = null ) {
 						</select>
 					</p>
 					<p>
-						<label for="cm-query-taxonomy"><?php esc_html_e( 'Category or taxonomy', 'collections-manager' ); ?></label><br />
+						<label for="cm-query-taxonomy"><?php esc_html_e( 'Category or tag', 'collections-manager' ); ?></label><br />
 						<select name="collection[query][taxonomy]" id="cm-query-taxonomy">
 							<?php if ( empty( $query_taxes ) ) : ?>
 								<option value=""><?php esc_html_e( 'None available', 'collections-manager' ); ?></option>
@@ -742,8 +1122,8 @@ function collections_manager_render_collection_form( $post = null ) {
 							<?php endif; ?>
 						</select>
 					</p>
-					<p><?php esc_html_e( 'Terms', 'collections-manager' ); ?></p>
-					<?php collections_manager_render_query_term_checkboxes( $query['taxonomy'], $query['terms'] ); ?>
+					<?php collections_manager_render_query_term_picker( $query['taxonomy'], $query['terms'] ); ?>
+					<div class="cm-query-preview" id="cm-query-preview" aria-live="polite"></div>
 					<p>
 						<label>
 							<input type="checkbox" name="collection[query][unlimited]" id="cm-query-unlimited" value="1" <?php checked( ! empty( $query['unlimited'] ) ); ?> />
@@ -769,7 +1149,7 @@ function collections_manager_render_collection_form( $post = null ) {
 						if ( ! empty( $query['unlimited'] ) ) {
 							esc_html_e( 'The carousel shows the latest 12, then a View more slide to the rest. Newest items appear first.', 'collections-manager' );
 						} else {
-							esc_html_e( 'Newest items appear first. Leave every term unchecked to include all items of this post type.', 'collections-manager' );
+							esc_html_e( 'Newest items appear first. Leave this empty to include every item of this post type.', 'collections-manager' );
 						}
 						?>
 					</p>
@@ -955,49 +1335,60 @@ function collections_manager_render_collection_form( $post = null ) {
 					</p>
 					<p class="description"><?php esc_html_e( 'Paste a WordPress homepage, a /wp-json/ URL, or an RSS/Atom feed (including category feeds). Items open on the remote site.', 'collections-manager' ); ?></p>
 				</div>
-			</td>
-		</tr>
-	</table>
+	</div>
 	<?php
+	echo '<div class="cm-editor__bar">';
 	submit_button( $is_edit ? __( 'Save collection', 'collections-manager' ) : __( 'Add collection', 'collections-manager' ), 'primary', 'collections_manager_save' );
+	echo '</div>';
 	echo '</form></div>';
 }
 
 /**
- * Checkbox list of taxonomy terms for a query collection.
+ * Searchable category or tag picker for a query collection.
+ *
+ * Selected terms are chips. The script fills matches from search so large
+ * taxonomies (tens of thousands of tags) are never printed in full.
  *
  * @param string $taxonomy Taxonomy slug.
  * @param int[]  $selected Selected term IDs.
  */
-function collections_manager_render_query_term_checkboxes( $taxonomy, $selected ) {
+function collections_manager_render_query_term_picker( $taxonomy, $selected ) {
 	$selected = array_map( 'absint', (array) $selected );
-	echo '<div class="cm-term-list" id="cm-query-terms">';
+	$taxes    = $taxonomy ? get_taxonomy( $taxonomy ) : null;
+	$label    = ( $taxes && ! is_wp_error( $taxes ) && ! empty( $taxes->labels->name ) ) ? $taxes->labels->name : __( 'terms', 'collections-manager' );
+
+	echo '<div class="cm-term-picker" id="cm-query-terms">';
 	if ( ! $taxonomy ) {
-		echo '<p class="description">' . esc_html__( 'This post type has no categories.', 'collections-manager' ) . '</p>';
+		echo '<p class="description">' . esc_html__( 'This post type has no categories or tags.', 'collections-manager' ) . '</p>';
 		echo '</div>';
 		return;
 	}
 
-	$terms = get_terms(
-		array(
-			'taxonomy'   => $taxonomy,
-			'hide_empty' => false,
+	echo '<div class="cm-term-picker__selected" id="cm-query-selected-terms">';
+	foreach ( $selected as $term_id ) {
+		$term = get_term( $term_id, $taxonomy );
+		if ( ! $term || is_wp_error( $term ) ) {
+			continue;
+		}
+		echo '<span class="cm-chip">';
+		echo '<input type="hidden" name="collection[query][terms][]" value="' . esc_attr( (string) $term->term_id ) . '" />';
+		echo '<span class="cm-chip__label">' . esc_html( $term->name ) . '</span>';
+		echo '<button type="button" class="button-link cm-chip__remove" aria-label="' . esc_attr__( 'Remove', 'collections-manager' ) . '">&times;</button>';
+		echo '</span>';
+	}
+	echo '</div>';
+	echo '<span class="cm-search-field">';
+	printf(
+		'<input type="search" id="cm-query-term-search" placeholder="%s" autocomplete="off" />',
+		esc_attr(
+			sprintf(
+				/* translators: %s: taxonomy label, such as categories. */
+				__( 'Search %s…', 'collections-manager' ),
+				strtolower( $label )
+			)
 		)
 	);
-	if ( is_wp_error( $terms ) || empty( $terms ) ) {
-		echo '<p class="description">' . esc_html__( 'No terms yet for this taxonomy.', 'collections-manager' ) . '</p>';
-		echo '</div>';
-		return;
-	}
-
-	foreach ( $terms as $term ) {
-		printf(
-			'<label><input type="checkbox" name="collection[query][terms][]" value="%1$d"%2$s /> %3$s <span class="cm-term-count">(%4$d)</span></label>',
-			(int) $term->term_id,
-			checked( in_array( (int) $term->term_id, $selected, true ), true, false ),
-			esc_html( $term->name ),
-			(int) $term->count
-		);
-	}
+	echo '<span class="cm-spinner" aria-hidden="true"></span></span>';
+	echo '<ul class="cm-term-results" id="cm-query-term-results" hidden></ul>';
 	echo '</div>';
 }

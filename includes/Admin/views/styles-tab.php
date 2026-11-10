@@ -21,13 +21,15 @@ if ( isset( $_GET['settings-updated'] ) ) { // phpcs:ignore WordPress.Security.N
 	echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__( 'Global styles saved.', 'collections-manager' ) . '</p></div>';
 }
 ?>
-<p class="description" style="max-width:720px;margin-top:12px;">
+<div class="cm-screen cm-screen--wide">
+<p class="cm-lead">
 	<?php esc_html_e( 'These styles apply to every Collections Browser block. Empty colors inherit the active theme (text color and palette). A block can opt out in the editor and set its own look.', 'collections-manager' ); ?>
 </p>
 <div class="cm-styles">
 	<form class="cm-styles__form" method="post" action="<?php echo esc_url( admin_url( 'admin.php?page=collections_manager&tab=styles' ) ); ?>">
 		<?php wp_nonce_field( 'collections_manager_save_styles' ); ?>
 
+		<section class="cm-dash-card">
 		<h2><?php esc_html_e( 'Collection tiles', 'collections-manager' ); ?></h2>
 		<table class="form-table" role="presentation">
 			<tr>
@@ -72,7 +74,9 @@ if ( isset( $_GET['settings-updated'] ) ) { // phpcs:ignore WordPress.Security.N
 				</td>
 			</tr>
 		</table>
+		</section>
 
+		<section class="cm-dash-card">
 		<h2><?php esc_html_e( 'Post cards', 'collections-manager' ); ?></h2>
 		<table class="form-table" role="presentation">
 			<tr>
@@ -101,8 +105,10 @@ if ( isset( $_GET['settings-updated'] ) ) { // phpcs:ignore WordPress.Security.N
 				</td>
 			</tr>
 		</table>
+		</section>
 
-		<h2><?php esc_html_e( 'Border & shadow', 'collections-manager' ); ?></h2>
+		<section class="cm-dash-card">
+		<h2><?php esc_html_e( 'Border and shadow', 'collections-manager' ); ?></h2>
 		<table class="form-table" role="presentation">
 			<tr>
 				<th scope="row"><label for="cm-style-radius"><?php esc_html_e( 'Border radius', 'collections-manager' ); ?></label></th>
@@ -160,7 +166,9 @@ if ( isset( $_GET['settings-updated'] ) ) { // phpcs:ignore WordPress.Security.N
 				</td>
 			</tr>
 		</table>
+		</section>
 
+		<section class="cm-dash-card">
 		<h2><?php esc_html_e( 'Slider box', 'collections-manager' ); ?></h2>
 		<table class="form-table" role="presentation">
 			<tr>
@@ -185,7 +193,9 @@ if ( isset( $_GET['settings-updated'] ) ) { // phpcs:ignore WordPress.Security.N
 				</td>
 			</tr>
 		</table>
+		</section>
 
+		<section class="cm-dash-card">
 		<h2><?php esc_html_e( 'Slider controls', 'collections-manager' ); ?></h2>
 		<table class="form-table" role="presentation">
 			<tr>
@@ -201,12 +211,15 @@ if ( isset( $_GET['settings-updated'] ) ) { // phpcs:ignore WordPress.Security.N
 				</td>
 			</tr>
 		</table>
+		</section>
 
-		<?php submit_button( __( 'Save styles', 'collections-manager' ), 'primary', 'collections_manager_save_styles' ); ?>
+		<div class="cm-editor__bar">
+			<?php submit_button( __( 'Save styles', 'collections-manager' ), 'primary', 'collections_manager_save_styles' ); ?>
+		</div>
 	</form>
 
-	<div class="cm-styles__preview">
-		<h2 style="margin-top:0;"><?php esc_html_e( 'Preview', 'collections-manager' ); ?></h2>
+	<div class="cm-styles__preview cm-dash-card">
+		<h2><?php esc_html_e( 'Preview', 'collections-manager' ); ?></h2>
 		<div id="cm-style-preview" class="<?php echo esc_attr( $preview_classes ); ?>" style="<?php echo esc_attr( $preview_style ); ?>">
 			<div class="cm-browser__rail">
 				<div class="cm-browser__rail-viewport">
@@ -247,5 +260,6 @@ if ( isset( $_GET['settings-updated'] ) ) { // phpcs:ignore WordPress.Security.N
 			</div>
 		</div>
 	</div>
+</div>
 </div>
 <?php

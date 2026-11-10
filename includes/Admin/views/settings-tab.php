@@ -13,7 +13,8 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 ?>
-<div class="cm-dash-card" style="margin-top:20px;">
+<div class="cm-screen">
+<div class="cm-dash-card">
 	<h2><?php esc_html_e( 'YouTube', 'collections-manager' ); ?></h2>
 	<p><?php esc_html_e( 'Collections can load a playlist by ID, or let you pick videos from specific channels. Playlists still work from YouTube’s public feed. A Data API key unlocks @handle lookup and browsing more than the latest uploads.', 'collections-manager' ); ?></p>
 	<?php if ( $has ) : ?>
@@ -49,7 +50,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 $license_saved  = \CollectionsManager\Updates\License::saved();
 $license_notice = isset( $_GET['updated'] ) ? sanitize_key( wp_unslash( $_GET['updated'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
 ?>
-<div class="cm-dash-card" style="margin-top:20px;">
+<div class="cm-dash-card">
 	<h2><?php esc_html_e( 'License key', 'collections-manager' ); ?></h2>
 	<p><?php esc_html_e( 'Collections Manager sends this key when it checks updates.bemistech.com for its own package. The key is stored encrypted and is not shown after you save.', 'collections-manager' ); ?></p>
 	<?php if ( 'license-saved' === $license_notice ) : ?>
@@ -82,4 +83,5 @@ $license_notice = isset( $_GET['updated'] ) ? sanitize_key( wp_unslash( $_GET['u
 	<?php else : ?>
 		<p><?php esc_html_e( 'Only administrators can change the license key.', 'collections-manager' ); ?></p>
 	<?php endif; ?>
+</div>
 </div>
