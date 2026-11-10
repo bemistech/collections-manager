@@ -6,9 +6,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag to upload
+        description: "Git tag to publish (include the v, e.g. v0.2.11)"
         required: true
-        default: "0.2.11"
+        default: "v0.2.11"
 
 permissions:
   contents: write
@@ -17,14 +17,27 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
+      - name: Resolve release tag
+        id: release
+        env:
+          RAW_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          TAG="${RAW_TAG#refs/tags/}"
+          case "$TAG" in
+            v*) ;;
+            *) TAG="v${TAG}" ;;
+          esac
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "Resolved release tag: ${TAG}"
+
       - name: Checkout release tag
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.release.tag_name || inputs.tag }}
+          ref: ${{ steps.release.outputs.tag }}
 
       - name: Build zip and metadata
         env:
-          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
           REPOSITORY: ${{ github.repository }}
         run: |
           VERSION="${RELEASE_TAG#v}"
@@ -53,15 +66,16 @@ jobs:
 
       - name: Upload zip to the GitHub release
         uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
         with:
+          tag_name: ${{ steps.release.outputs.tag }}
           files: /tmp/dist/collections-manager.zip
+          fail_on_unmatched_files: true
 
       - name: Upload to R2
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
         run: |
           VERSION="${RELEASE_TAG#v}"
           npx --yes wrangler@4 r2 object put "w7-p7/collections-manager/collections-manager-$VERSION.zip" --file "/tmp/dist/collections-manager-$VERSION.zip" --remote --content-type application/zip --cache-control "public, max-age=31536000, immutable"
