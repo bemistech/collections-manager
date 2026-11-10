@@ -12,7 +12,7 @@ add_action( 'after_setup_theme', 'collections_manager_register_image_sizes' );
  * Portrait crop for phone collection cards. Existing files pick it up after their subsizes are generated.
  */
 function collections_manager_register_image_sizes() {
-	add_image_size( 'cm-portrait', 540, 960, true );
+	add_image_size( 'cm-portrait', 720, 1280, true );
 }
 
 add_action( 'init', 'collections_manager_register_blocks' );

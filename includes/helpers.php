@@ -653,14 +653,21 @@ function collections_manager_get_collection_items( $collection_id ) {
 }
 
 /**
- * Card image markup with a reserved 9:16 box and the smallest fitting srcset candidate.
+ * Card and cover markup. Both request the 9:16 crop and a srcset when the file is in the library.
  *
- * @param int    $attachment_id Attachment ID, or 0 for a remote URL.
- * @param string $fallback_url  Remote image used when there is no attachment.
+ * @param int    $attachment_id Attachment ID, or 0 when only a URL is known.
+ * @param string $fallback_url  Image URL used when there is no attachment.
  * @return string Escaped image HTML.
  */
 function collections_manager_card_image_html( $attachment_id, $fallback_url = '' ) {
 	$attachment_id = absint( $attachment_id );
+	if ( ! $attachment_id && is_string( $fallback_url ) && '' !== $fallback_url ) {
+		$home = wp_parse_url( home_url(), PHP_URL_HOST );
+		$host = wp_parse_url( $fallback_url, PHP_URL_HOST );
+		if ( is_string( $home ) && is_string( $host ) && 0 === strcasecmp( $home, $host ) ) {
+			$attachment_id = (int) attachment_url_to_postid( $fallback_url );
+		}
+	}
 	if ( $attachment_id ) {
 		// Ask for the 9:16 crop. WordPress serves the full file, with srcset, when that subsize was never generated.
 		$html = wp_get_attachment_image(
@@ -669,7 +676,7 @@ function collections_manager_card_image_html( $attachment_id, $fallback_url = ''
 			false,
 			array(
 				'alt'      => '',
-				'sizes'    => '(max-width: 781px) 64vw, 280px',
+				'sizes'    => '(max-width:781px) 110vw, 280px',
 				'loading'  => 'lazy',
 				'decoding' => 'async',
 			)
@@ -681,7 +688,7 @@ function collections_manager_card_image_html( $attachment_id, $fallback_url = ''
 	if ( ! is_string( $fallback_url ) || '' === $fallback_url ) {
 		return '';
 	}
-	return '<img src="' . esc_url( $fallback_url ) . '" alt="" width="540" height="960" loading="lazy" decoding="async" />';
+	return '<img src="' . esc_url( $fallback_url ) . '" alt="" width="720" height="1280" sizes="(max-width:781px) 110vw, 280px" loading="lazy" decoding="async" />';
 }
 
 function collections_manager_card_image_url( $post_id, $size = 'medium_large' ) {
@@ -778,31 +785,30 @@ function collections_manager_browser_item( $collection ) {
 /**
  * Data the browser block and view script need.
  *
- * A placement slug limits the row to collections in that term. Without one,
- * the block keeps the show-all or checklist behavior.
+ * A placement slug limits the row to published collections in that term.
+ * An unknown slug renders nothing. With no placement, the block keeps the
+ * show-all or checklist behavior.
  *
  * @param array $attributes Block attributes.
  * @return array<int, array<string, mixed>>
  */
 function collections_manager_get_browser_payload( $attributes = array() ) {
 	$attributes = is_array( $attributes ) ? $attributes : array();
-	$placement  = isset( $attributes['placement'] ) ? sanitize_title( (string) $attributes['placement'] ) : '';
+	$placement  = isset( $attributes['placement'] ) ? sanitize_key( (string) $attributes['placement'] ) : '';
 	$show_all   = ! array_key_exists( 'showAllCollections', $attributes ) || (bool) $attributes['showAllCollections'];
 	$payload    = array();
 
 	if ( '' !== $placement ) {
-		$collections = collections_manager_get_collections(
-			array(
-				'tax_query' => array(
-					array(
-						'taxonomy' => COLLECTIONS_MANAGER_PLACEMENT,
-						'field'    => 'slug',
-						'terms'    => $placement,
-					),
-				),
-			)
-		);
-		foreach ( $collections as $collection ) {
+		$term = get_term_by( 'slug', $placement, COLLECTIONS_MANAGER_PLACEMENT );
+		if ( ! $term || is_wp_error( $term ) ) {
+			return array();
+		}
+
+		foreach ( \CollectionsManager\PlacementOrder::collection_ids( $term ) as $id ) {
+			$collection = get_post( $id );
+			if ( ! $collection instanceof WP_Post || COLLECTIONS_MANAGER_POST_TYPE !== $collection->post_type || 'publish' !== $collection->post_status ) {
+				continue;
+			}
 			$payload[] = collections_manager_browser_item( $collection );
 		}
 		return $payload;

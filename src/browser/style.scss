@@ -48,12 +48,16 @@
 .cm-browser__rail-viewport {
 	overflow: hidden;
 	padding: 0.85rem 0.85rem 1.35rem;
+	overscroll-behavior-x: contain;
+	scroll-snap-type: x proximity;
+	touch-action: pan-y pinch-zoom;
 }
 
 .cm-browser__rail-container {
 	display: flex;
 	align-items: flex-start;
 	touch-action: pan-y pinch-zoom;
+	overscroll-behavior-x: contain;
 	gap: var(--cm-item-gap);
 }
 
@@ -374,11 +378,15 @@
 .cm-browser__viewport {
 	overflow: hidden;
 	padding: 0.7rem 0.35rem 1.1rem;
+	overscroll-behavior-x: contain;
+	scroll-snap-type: x proximity;
+	touch-action: pan-y pinch-zoom;
 }
 
 .cm-browser__track {
 	display: flex;
 	touch-action: pan-y pinch-zoom;
+	overscroll-behavior-x: contain;
 	margin-left: calc(var(--cm-card-gap) * -1);
 }
 
@@ -750,6 +758,10 @@
 		flex: 0 0 calc((100% - (var(--cm-cards-mobile, 1.7) - 1) * var(--cm-card-gap)) / var(--cm-cards-mobile, 1.7));
 		max-width: none;
 	}
+}
+
+.cm-browser-editor__placement {
+	margin: 0 0 12px;
 }
 
 @media (prefers-reduced-motion: reduce) {

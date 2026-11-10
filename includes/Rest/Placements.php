@@ -11,6 +11,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
+use CollectionsManager\PlacementOrder;
 use CollectionsManager\PlacementUsage;
 
 /**
@@ -41,6 +42,48 @@ class Placements {
 						'type'              => 'string',
 						'required'          => true,
 						'sanitize_callback' => 'sanitize_text_field',
+					),
+				),
+			)
+		);
+
+		register_rest_route(
+			'collections-manager/v1',
+			'/placements/(?P<slug>[a-z0-9_-]+)/summary',
+			array(
+				'methods'             => \WP_REST_Server::READABLE,
+				'callback'            => array( __CLASS__, 'summary' ),
+				'permission_callback' => array( __CLASS__, 'can_edit' ),
+				'args'                => array(
+					'slug' => array(
+						'type'              => 'string',
+						'required'          => true,
+						'sanitize_callback' => 'sanitize_key',
+					),
+				),
+			)
+		);
+
+		register_rest_route(
+			'collections-manager/v1',
+			'/placements/(?P<slug>[a-z0-9_-]+)/order',
+			array(
+				'methods'             => \WP_REST_Server::CREATABLE,
+				'callback'            => array( __CLASS__, 'update_order' ),
+				'permission_callback' => array( __CLASS__, 'can_assign' ),
+				'args'                => array(
+					'slug' => array(
+						'type'              => 'string',
+						'required'          => true,
+						'sanitize_callback' => 'sanitize_key',
+					),
+					'ids'  => array(
+						'type'              => 'array',
+						'required'          => true,
+						'items'             => array(
+							'type' => 'integer',
+						),
+						'sanitize_callback' => array( __CLASS__, 'sanitize_ids' ),
 					),
 				),
 			)
@@ -84,6 +127,109 @@ class Placements {
 			__( 'Sorry, you are not allowed to edit placements.', 'collections-manager' ),
 			array( 'status' => rest_authorization_required_code() )
 		);
+	}
+
+	/**
+	 * Assigning or reordering a Placement requires an editor of others' posts and a REST nonce.
+	 *
+	 * @param \WP_REST_Request $request Request.
+	 * @return true|\WP_Error
+	 */
+	public static function can_assign( \WP_REST_Request $request ) {
+		if ( ! current_user_can( 'edit_others_posts' ) ) {
+			return new \WP_Error(
+				'collections_manager_forbidden',
+				__( 'Sorry, you are not allowed to edit this Placement.', 'collections-manager' ),
+				array( 'status' => rest_authorization_required_code() )
+			);
+		}
+
+		$nonce = $request->get_header( 'X-WP-Nonce' );
+		if ( ! is_string( $nonce ) || ! wp_verify_nonce( $nonce, 'wp_rest' ) ) {
+			return new \WP_Error(
+				'collections_manager_invalid_nonce',
+				__( 'The security check failed. Reload the page and try again.', 'collections-manager' ),
+				array( 'status' => 403 )
+			);
+		}
+
+		return true;
+	}
+
+	/**
+	 * @param mixed $ids Raw IDs.
+	 * @return int[]
+	 */
+	public static function sanitize_ids( $ids ) {
+		if ( ! is_array( $ids ) ) {
+			return array();
+		}
+
+		return array_values( array_filter( array_map( 'absint', $ids ) ) );
+	}
+
+	/**
+	 * Placement name, published collection count, and a link to the manager.
+	 *
+	 * @param \WP_REST_Request $request Request.
+	 * @return \WP_REST_Response|\WP_Error
+	 */
+	public static function summary( \WP_REST_Request $request ) {
+		$term = self::term_from_request( $request );
+		if ( is_wp_error( $term ) ) {
+			return $term;
+		}
+
+		return rest_ensure_response(
+			array(
+				'name'      => $term->name,
+				'slug'      => $term->slug,
+				'count'     => count( PlacementOrder::collection_ids( $term ) ),
+				'admin_url' => admin_url( 'admin.php?page=collections_manager&tab=collections&placement=' . rawurlencode( $term->slug ) ),
+			)
+		);
+	}
+
+	/**
+	 * Save the drag order for one Placement.
+	 *
+	 * @param \WP_REST_Request $request Request.
+	 * @return \WP_REST_Response|\WP_Error
+	 */
+	public static function update_order( \WP_REST_Request $request ) {
+		$term = self::term_from_request( $request );
+		if ( is_wp_error( $term ) ) {
+			return $term;
+		}
+
+		$ids = PlacementOrder::set_ids( $term, $request->get_param( 'ids' ) );
+
+		return rest_ensure_response(
+			array(
+				'slug' => $term->slug,
+				'ids'  => $ids,
+			)
+		);
+	}
+
+	/**
+	 * Resolve a sanitized slug to a real term before any query.
+	 *
+	 * @param \WP_REST_Request $request Request.
+	 * @return \WP_Term|\WP_Error
+	 */
+	private static function term_from_request( \WP_REST_Request $request ) {
+		$slug = sanitize_key( (string) $request->get_param( 'slug' ) );
+		$term = '' !== $slug ? get_term_by( 'slug', $slug, COLLECTIONS_MANAGER_PLACEMENT ) : false;
+		if ( ! $term || is_wp_error( $term ) ) {
+			return new \WP_Error(
+				'collections_manager_not_found',
+				__( 'That Placement could not be found.', 'collections-manager' ),
+				array( 'status' => 404 )
+			);
+		}
+
+		return $term;
 	}
 
 	/**

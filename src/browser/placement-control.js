@@ -211,7 +211,7 @@ export default function PlacementControl( { value, onChange } ) {
 	return (
 		<>
 			<SelectControl
-				label={ __( 'Collection placement', 'collections-manager' ) }
+				label={ __( 'Placement', 'collections-manager' ) }
 				value={ value || '' }
 				options={ options }
 				onChange={ ( next ) => {

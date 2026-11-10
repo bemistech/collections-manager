@@ -524,6 +524,28 @@ function collections_manager_enqueue_dashboard_assets( $hook ) {
 		COLLECTIONS_MANAGER_VERSION
 	);
 
+	// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only screen state.
+	$placement_filter = isset( $_GET['placement'] ) ? sanitize_key( wp_unslash( $_GET['placement'] ) ) : '';
+	if ( $placement_filter && current_user_can( 'edit_others_posts' ) && in_array( $tab, array( 'overview', 'collections' ), true ) ) {
+		wp_enqueue_script(
+			'collections-manager-placement-order',
+			COLLECTIONS_MANAGER_URL . 'assets/placement-order.js',
+			array( 'jquery', 'jquery-ui-sortable', 'wp-api-fetch' ),
+			COLLECTIONS_MANAGER_VERSION,
+			true
+		);
+		wp_localize_script(
+			'collections-manager-placement-order',
+			'collectionsManagerPlacementOrder',
+			array(
+				'slug'    => $placement_filter,
+				'saving'  => __( 'Saving order…', 'collections-manager' ),
+				'saved'   => __( 'Order saved.', 'collections-manager' ),
+				'error'   => __( 'The order could not be saved.', 'collections-manager' ),
+			)
+		);
+	}
+
 	if ( 'styles' === $tab ) {
 		wp_enqueue_style(
 			'collections-manager-browser',
@@ -629,8 +651,9 @@ function collections_manager_enqueue_dashboard_assets( $hook ) {
  * @param int $collection_id Collection being edited, or 0 for a new one.
  */
 function collections_manager_render_placement_checkboxes( $collection_id ) {
-	$selected = $collection_id ? wp_get_object_terms( $collection_id, COLLECTIONS_MANAGER_PLACEMENT, array( 'fields' => 'ids' ) ) : array();
-	$selected = is_wp_error( $selected ) ? array() : array_map( 'intval', $selected );
+	$can_assign = current_user_can( 'edit_others_posts' );
+	$selected   = $collection_id ? wp_get_object_terms( $collection_id, COLLECTIONS_MANAGER_PLACEMENT, array( 'fields' => 'ids' ) ) : array();
+	$selected   = is_wp_error( $selected ) ? array() : array_map( 'intval', $selected );
 	$placements = get_terms(
 		array(
 			'taxonomy'   => COLLECTIONS_MANAGER_PLACEMENT,
@@ -639,7 +662,7 @@ function collections_manager_render_placement_checkboxes( $collection_id ) {
 	);
 
 	if ( is_wp_error( $placements ) || empty( $placements ) ) {
-		echo '<p>' . esc_html__( 'No placements yet. Create one from a Collections Browser block.', 'collections-manager' ) . '</p>';
+		echo '<p>' . esc_html__( 'No Placement yet. Create one from a Collections Browser block.', 'collections-manager' ) . '</p>';
 		return;
 	}
 
@@ -650,12 +673,16 @@ function collections_manager_render_placement_checkboxes( $collection_id ) {
 			$label .= ' (' . __( 'inactive', 'collections-manager' ) . ')';
 		}
 		echo '<label>';
-		echo '<input type="checkbox" name="collection[placements][]" value="' . esc_attr( (string) $placement->term_id ) . '" ' . checked( in_array( (int) $placement->term_id, $selected, true ), true, false ) . ' /> ';
+		echo '<input type="checkbox" name="collection[placements][]" value="' . esc_attr( (string) $placement->term_id ) . '" ' . checked( in_array( (int) $placement->term_id, $selected, true ), true, false ) . disabled( ! $can_assign, true, false ) . ' /> ';
 		echo esc_html( $label );
 		echo '</label>';
 	}
 	echo '</fieldset>';
-	echo '<p class="description">' . esc_html__( 'Checked collections show in blocks that use that placement. Inactive means no saved block currently uses it.', 'collections-manager' ) . '</p>';
+	if ( $can_assign ) {
+		echo '<p class="description">' . esc_html__( 'Checked collections show in blocks that use that Placement. Inactive means no saved block currently uses it.', 'collections-manager' ) . '</p>';
+	} else {
+		echo '<p class="description">' . esc_html__( 'You need permission to edit others’ posts to change Placement.', 'collections-manager' ) . '</p>';
+	}
 }
 
 /**
@@ -665,6 +692,13 @@ function collections_manager_render_placement_checkboxes( $collection_id ) {
  * @param mixed $raw_ids       Posted term IDs.
  */
 function collections_manager_save_placements( $collection_id, $raw_ids ) {
+	if ( ! current_user_can( 'edit_others_posts' ) ) {
+		return;
+	}
+	if ( ! isset( $_POST['_wpnonce'] ) || ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['_wpnonce'] ) ), 'collections_manager_save' ) ) {
+		return;
+	}
+
 	$term_ids = array();
 	foreach ( array_map( 'absint', (array) $raw_ids ) as $term_id ) {
 		if ( ! $term_id ) {
@@ -783,7 +817,7 @@ function collections_manager_render_dashboard_page() {
 	$tabs = array(
 		'overview'     => __( 'Overview', 'collections-manager' ),
 		'collections'  => __( 'Collections', 'collections-manager' ),
-		'placements'   => __( 'Placements', 'collections-manager' ),
+		'placements'   => __( 'Placement', 'collections-manager' ),
 		'styles'       => __( 'Styles', 'collections-manager' ),
 		'settings'     => __( 'Settings', 'collections-manager' ),
 		'how-to-use'   => __( 'How to Use', 'collections-manager' ),
@@ -855,8 +889,8 @@ function collections_manager_render_how_to_use_tab() {
 	echo '<li>' . esc_html__( 'Choose how items are added: browse and click posts (filter by a category or tag when you want a group), pull the latest posts from a category or tag, load a remote WordPress site or XML feed (for example podcasts.wdwnt.com), or use a YouTube playlist or videos.', 'collections-manager' ) . '</li>';
 	echo '<li>' . esc_html__( 'For a remote site, paste the homepage (WordPress REST is used when available) or an RSS/Atom URL such as a category feed. Optional category filters apply to WordPress REST sources.', 'collections-manager' ) . '</li>';
 	echo '<li>' . esc_html__( 'For YouTube, add a channel, then choose latest uploads, a playlist from that channel, or specific videos. Listing playlists and browsing beyond the public RSS feed needs a Data API key under Collections → Settings (or COLLECTIONS_MANAGER_YOUTUBE_API_KEY in wp-config.php).', 'collections-manager' ) . '</li>';
-	echo '<li>' . esc_html__( 'Lower order numbers appear first in the Collections Browser row.', 'collections-manager' ) . '</li>';
-	echo '<li>' . esc_html__( 'Insert the Collections Browser block. Create or choose a named placement when the page needs its own slot, then check that placement on each collection. Leave the placement empty to pick collections on the block instead. Readers tap a collection to open its carousel underneath — they stay on the page.', 'collections-manager' ) . '</li>';
+	echo '<li>' . esc_html__( 'Filter the collection list to one Placement and drag the rows to set that Placement’s order. Display order is only the fallback.', 'collections-manager' ) . '</li>';
+	echo '<li>' . esc_html__( 'Insert the Collections Browser block and choose a Placement. Check that Placement on each collection. Leave the Placement empty only on older blocks that still pick collections themselves. Readers tap a collection to open its carousel underneath — they stay on the page.', 'collections-manager' ) . '</li>';
 	echo '<li>' . esc_html__( 'Set site-wide spacing, shadows, slider box, and colors under Collections → Styles. Those inherit the active theme unless you pick a palette or custom color.', 'collections-manager' ) . '</li>';
 	echo '<li>' . esc_html__( 'In the block sidebar, leave “Use global styles” on, or turn it off to style only that block.', 'collections-manager' ) . '</li>';
 	echo '</ol></div></div>';
@@ -925,32 +959,132 @@ function collections_manager_render_collections_toolbar() {
 }
 
 /**
+ * Names of the Placements assigned to a collection.
+ *
+ * @param int $collection_id Collection ID.
+ * @return string
+ */
+function collections_manager_placement_labels( $collection_id ) {
+	$terms = get_the_terms( $collection_id, COLLECTIONS_MANAGER_PLACEMENT );
+	if ( ! is_array( $terms ) || empty( $terms ) ) {
+		return '';
+	}
+
+	$names = array();
+	foreach ( $terms as $term ) {
+		$names[] = $term->name;
+	}
+
+	return implode( ', ', $names );
+}
+
+/**
+ * Placement filter for the collection list.
+ *
+ * @param string $current Selected slug.
+ */
+function collections_manager_render_placement_filter( $current ) {
+	$terms = get_terms(
+		array(
+			'taxonomy'   => COLLECTIONS_MANAGER_PLACEMENT,
+			'hide_empty' => false,
+		)
+	);
+	if ( is_wp_error( $terms ) ) {
+		$terms = array();
+	}
+
+	// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only screen state.
+	$tab = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'overview';
+	if ( ! in_array( $tab, array( 'overview', 'collections' ), true ) ) {
+		$tab = 'overview';
+	}
+
+	echo '<form method="get" class="cm-placement-filter" action="' . esc_url( admin_url( 'admin.php' ) ) . '">';
+	echo '<input type="hidden" name="page" value="collections_manager" />';
+	echo '<input type="hidden" name="tab" value="' . esc_attr( $tab ) . '" />';
+	echo '<label for="cm-placement-filter">' . esc_html__( 'Placement', 'collections-manager' ) . '</label>';
+	echo '<select name="placement" id="cm-placement-filter">';
+	echo '<option value="">' . esc_html__( 'All', 'collections-manager' ) . '</option>';
+	foreach ( $terms as $term ) {
+		printf(
+			'<option value="%s" %s>%s</option>',
+			esc_attr( $term->slug ),
+			selected( $current, $term->slug, false ),
+			esc_html( $term->name )
+		);
+	}
+	echo '</select>';
+	submit_button( __( 'Filter', 'collections-manager' ), 'secondary', '', false );
+	echo '</form>';
+}
+
+/**
  * Collection list used on the overview and the collections tab.
  */
 function collections_manager_render_collections_table() {
-	$collections = collections_manager_get_collections();
+	// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only screen state.
+	$slug     = isset( $_GET['placement'] ) ? sanitize_key( wp_unslash( $_GET['placement'] ) ) : '';
+	$term     = '' !== $slug ? get_term_by( 'slug', $slug, COLLECTIONS_MANAGER_PLACEMENT ) : false;
+	$filtered = $term && ! is_wp_error( $term );
+	$can_sort = $filtered && current_user_can( 'edit_others_posts' );
+	$unknown  = '' !== $slug && ! $filtered;
+
+	collections_manager_render_placement_filter( $filtered ? $term->slug : '' );
+
+	if ( $can_sort ) {
+		echo '<p class="description">' . esc_html__( 'Drag the rows to set the order for this Placement.', 'collections-manager' ) . '</p>';
+	}
+
+	$collections = array();
+	if ( $filtered ) {
+		foreach ( \CollectionsManager\PlacementOrder::collection_ids( $term ) as $id ) {
+			$collection = get_post( $id );
+			if ( $collection instanceof WP_Post ) {
+				$collections[] = $collection;
+			}
+		}
+	} elseif ( ! $unknown ) {
+		$collections = collections_manager_get_collections();
+	}
+
 	echo '<table class="widefat striped cm-table"><thead><tr>';
+	if ( $can_sort ) {
+		echo '<th class="cm-placement-order__grip" scope="col"><span class="screen-reader-text">' . esc_html__( 'Order', 'collections-manager' ) . '</span></th>';
+	}
 	echo '<th>' . esc_html__( 'Name', 'collections-manager' ) . '</th>';
 	echo '<th>' . esc_html__( 'Source', 'collections-manager' ) . '</th>';
 	echo '<th>' . esc_html__( 'Items', 'collections-manager' ) . '</th>';
+	echo '<th>' . esc_html__( 'Placement', 'collections-manager' ) . '</th>';
 	echo '<th>' . esc_html__( 'Order', 'collections-manager' ) . '</th>';
 	echo '<th>' . esc_html__( 'Actions', 'collections-manager' ) . '</th>';
-	echo '</tr></thead><tbody>';
+	echo '</tr></thead><tbody' . ( $can_sort ? ' id="cm-placement-order"' : '' ) . '>';
 
-	if ( empty( $collections ) ) {
-		echo '<tr><td colspan="5">' . esc_html__( 'No collections yet.', 'collections-manager' ) . '</td></tr>';
+	if ( $unknown ) {
+		echo '<tr><td colspan="' . (int) ( $can_sort ? 7 : 6 ) . '">' . esc_html__( 'That Placement could not be found.', 'collections-manager' ) . '</td></tr>';
+	} elseif ( empty( $collections ) ) {
+		$message = $filtered
+			? __( 'No collections in this Placement yet.', 'collections-manager' )
+			: __( 'No collections yet.', 'collections-manager' );
+		echo '<tr><td colspan="' . (int) ( $can_sort ? 7 : 6 ) . '">' . esc_html( $message ) . '</td></tr>';
 	} else {
+		$position = 0;
 		foreach ( $collections as $collection ) {
+			++$position;
 			$edit  = collections_manager_dashboard_url( array( 'tab' => 'collections', 'collection' => $collection->ID ) );
 			$trash = wp_nonce_url(
 				collections_manager_dashboard_url( array( 'tab' => 'collections', 'collections_manager_trash' => $collection->ID ) ),
 				'collections_manager_trash_' . $collection->ID
 			);
-			echo '<tr>';
+			echo '<tr' . ( $can_sort ? ' data-id="' . esc_attr( (string) $collection->ID ) . '"' : '' ) . '>';
+			if ( $can_sort ) {
+				echo '<td><button type="button" class="cm-placement-order__handle" aria-label="' . esc_attr__( 'Drag to reorder', 'collections-manager' ) . '"><span class="dashicons dashicons-move" aria-hidden="true"></span></button></td>';
+			}
 			printf( '<td><a href="%s"><strong>%s</strong></a></td>', esc_url( $edit ), esc_html( get_the_title( $collection ) ) );
 			echo '<td>' . esc_html( collections_manager_source_label( collections_manager_get_source( $collection->ID ) ) ) . '</td>';
 			echo '<td>' . esc_html( (string) collections_manager_collection_item_count( $collection->ID ) ) . '</td>';
-			echo '<td>' . esc_html( (string) $collection->menu_order ) . '</td>';
+			echo '<td>' . esc_html( collections_manager_placement_labels( $collection->ID ) ) . '</td>';
+			echo '<td>' . esc_html( (string) ( $filtered ? $position : (int) $collection->menu_order ) ) . '</td>';
 			echo '<td><span class="cm-row-actions">';
 			printf( '<a href="%s">%s</a>', esc_url( $edit ), esc_html__( 'Edit', 'collections-manager' ) );
 			if ( current_user_can( 'delete_post', $collection->ID ) ) {
@@ -960,6 +1094,9 @@ function collections_manager_render_collections_table() {
 		}
 	}
 	echo '</tbody></table>';
+	if ( $can_sort ) {
+		echo '<p id="cm-placement-order-status" class="cm-placement-order__status" role="status"></p>';
+	}
 }
 
 function collections_manager_render_collection_form( $post = null ) {
@@ -1006,10 +1143,10 @@ function collections_manager_render_collection_form( $post = null ) {
 			<p class="cm-field">
 				<label for="cm-order"><?php esc_html_e( 'Display order', 'collections-manager' ); ?></label>
 				<input name="collection[menu_order]" id="cm-order" type="number" class="small-text" value="<?php echo esc_attr( (string) $order ); ?>" />
-				<span class="description"><?php esc_html_e( 'Lower numbers appear first in the browser row.', 'collections-manager' ); ?></span>
+				<span class="description"><?php esc_html_e( 'Fallback order when a Placement has no drag order of its own.', 'collections-manager' ); ?></span>
 			</p>
 			<div class="cm-field">
-				<span class="cm-field__label" id="cm-placements-label"><?php esc_html_e( 'Placements', 'collections-manager' ); ?></span>
+				<span class="cm-field__label" id="cm-placements-label"><?php esc_html_e( 'Placement', 'collections-manager' ); ?></span>
 				<?php collections_manager_render_placement_checkboxes( $is_edit ? $post->ID : 0 ); ?>
 			</div>
 		</div>

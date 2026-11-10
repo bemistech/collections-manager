@@ -1,4 +1,4 @@
-import { __ } from '@wordpress/i18n';
+import { __, sprintf, _n } from '@wordpress/i18n';
 import { useBlockProps, InspectorControls } from '@wordpress/block-editor';
 import {
 	PanelBody,
@@ -8,6 +8,7 @@ import {
 	CheckboxControl,
 	Spinner,
 	Button,
+	ExternalLink,
 } from '@wordpress/components';
 import { decodeEntities } from '@wordpress/html-entities';
 import { useEffect, useState } from '@wordpress/element';
@@ -42,6 +43,93 @@ function collectionLabel( collection ) {
 		return decodeEntities( collection.title );
 	}
 	return `#${ collection?.id }`;
+}
+
+function PlacementPreview( { slug, attributes } ) {
+	const [ summary, setSummary ] = useState( null );
+	const [ state, setState ] = useState( 'loading' );
+
+	useEffect( () => {
+		let cancelled = false;
+		setState( 'loading' );
+		setSummary( null );
+		apiFetch( {
+			path: `/collections-manager/v1/placements/${ encodeURIComponent( slug ) }/summary`,
+		} )
+			.then( ( data ) => {
+				if ( cancelled ) {
+					return;
+				}
+				setSummary( data );
+				setState( 'ready' );
+			} )
+			.catch( () => {
+				if ( ! cancelled ) {
+					setState( 'empty' );
+				}
+			} );
+
+		return () => {
+			cancelled = true;
+		};
+	}, [ slug ] );
+
+	if ( 'loading' === state ) {
+		return <Spinner />;
+	}
+
+	const count = summary && Number.isFinite( summary.count ) ? summary.count : 0;
+	const name = summary?.name || slug;
+	const href = summary?.admin_url || 'admin.php?page=collections_manager';
+	const managerLink = (
+		<ExternalLink href={ href }>
+			{ __( 'Collections Manager', 'collections-manager' ) }
+		</ExternalLink>
+	);
+
+	if ( 'ready' !== state || count < 1 ) {
+		return (
+			<Placeholder
+				icon="index-card"
+				label={ metadata.title }
+				instructions={ __(
+					'No collections in this placement yet',
+					'collections-manager'
+				) }
+			>
+				<p className="cm-browser-editor__placement">{ name }</p>
+				{ managerLink }
+			</Placeholder>
+		);
+	}
+
+	return (
+		<>
+			<p className="cm-browser-editor__placement">
+				{ sprintf(
+					/* translators: 1: placement name, 2: collection count. */
+					__( '%1$s · %2$s', 'collections-manager' ),
+					name,
+					sprintf(
+						/* translators: %d: number of collections in the placement. */
+						_n(
+							'%d collection',
+							'%d collections',
+							count,
+							'collections-manager'
+						),
+						count
+					)
+				) }{ ' ' }
+				{ managerLink }
+			</p>
+			<ServerSideRender
+				block={ metadata.name }
+				attributes={ attributes }
+				httpMethod="POST"
+			/>
+		</>
+	);
 }
 
 const VISIBLE_OPTIONS = [
@@ -119,7 +207,7 @@ export default function Edit( { attributes, setAttributes } ) {
 					{ !! placementSlug && (
 						<p>
 							{ __(
-								'This block shows collections checked for the placement above.',
+								'This block shows collections checked for the Placement above.',
 								'collections-manager'
 							) }
 						</p>
@@ -191,33 +279,32 @@ export default function Edit( { attributes, setAttributes } ) {
 					setAttributes={ setAttributes }
 				/>
 			</InspectorControls>
-			<ServerSideRender
-				block={ metadata.name }
-				attributes={ attributes }
-				httpMethod="POST"
-				EmptyResponsePlaceholder={ () => (
-					<Placeholder
-						icon="index-card"
-						label={ metadata.title }
-						instructions={
-							placementSlug
-								? __(
-										'No collections are checked for this placement yet.',
-										'collections-manager'
-								  )
-								: showAllCollections === false && ! selectedIds.length
-								? __(
-										'Turn on Show all collections, or check the collections this block should display.',
-										'collections-manager'
-								  )
-								: __(
-										'No collections yet. Add some in Collections Manager.',
-										'collections-manager'
-								  )
-						}
-					/>
-				) }
-			/>
+			{ placementSlug ? (
+				<PlacementPreview slug={ placementSlug } attributes={ attributes } />
+			) : (
+				<ServerSideRender
+					block={ metadata.name }
+					attributes={ attributes }
+					httpMethod="POST"
+					EmptyResponsePlaceholder={ () => (
+						<Placeholder
+							icon="index-card"
+							label={ metadata.title }
+							instructions={
+								showAllCollections === false && ! selectedIds.length
+									? __(
+											'Turn on Show all collections, or check the collections this block should display.',
+											'collections-manager'
+									  )
+									: __(
+											'No collections yet. Add some in Collections Manager.',
+											'collections-manager'
+									  )
+							}
+						/>
+					) }
+				/>
+			) }
 		</div>
 	);
 }

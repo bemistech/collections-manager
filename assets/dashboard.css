@@ -20,6 +20,39 @@
 	margin: 0 0 12px;
 }
 
+.cm-placement-filter {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	margin: 0 0 12px;
+}
+
+.cm-placement-filter label {
+	font-weight: 600;
+}
+
+.cm-placement-order__handle {
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: #646970;
+	cursor: grab;
+}
+
+.cm-placement-order__handle:hover,
+.cm-placement-order__handle:focus {
+	color: #1d2327;
+}
+
+.cm-placement-order__status {
+	margin: 8px 0 0;
+}
+
+.cm-placement-order__status--error {
+	color: #b32d2e;
+}
+
 .cm-back {
 	margin: 0 0 12px;
 }

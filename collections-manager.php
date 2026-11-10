@@ -6,7 +6,7 @@
  * Author URI: https://bemistech.com
  * License: GPLv2 or later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
- * Version: 0.2.10
+ * Version: 0.2.11
  * Text Domain: collections-manager
  * Update URI: https://updates.bemistech.com/collections-manager.json
  *
@@ -17,7 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'COLLECTIONS_MANAGER_VERSION', '0.2.10' );
+define( 'COLLECTIONS_MANAGER_VERSION', '0.2.11' );
 define( 'COLLECTIONS_MANAGER_FILE', __FILE__ );
 define( 'COLLECTIONS_MANAGER_PATH', plugin_dir_path( __FILE__ ) );
 define( 'COLLECTIONS_MANAGER_URL', plugin_dir_url( __FILE__ ) );
@@ -37,7 +37,10 @@ CollectionsManager\Updates\Checker::register();
 CollectionsManager\Updates\License::register();
 CollectionsManager\Rest\Picker::register();
 CollectionsManager\Placements::register();
+CollectionsManager\PlacementOrder::register();
 CollectionsManager\PlacementUsage::register();
+CollectionsManager\Upgrade::register();
+CollectionsManager\Rest\PlacementTerms::register();
 CollectionsManager\Rest\Placements::register();
 
 require_once COLLECTIONS_MANAGER_PATH . 'includes/helpers.php';
@@ -49,5 +52,7 @@ require_once COLLECTIONS_MANAGER_PATH . 'includes/blocks.php';
 register_activation_hook( __FILE__, 'collections_manager_activate' );
 function collections_manager_activate() {
 	collections_manager_register_post_type();
+	\CollectionsManager\Placements::register_taxonomy();
+	\CollectionsManager\Upgrade::seed();
 	flush_rewrite_rules();
 }
