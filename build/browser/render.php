@@ -7,6 +7,10 @@
  * @var WP_Block $block      Block instance.
  */
 
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
 $collections = collections_manager_get_browser_payload( is_array( $attributes ) ? $attributes : array() );
 if ( empty( $collections ) ) {
 	return '';

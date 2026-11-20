@@ -34,11 +34,13 @@ function collections_manager_handle_dashboard_actions() {
 		return;
 	}
 
+	// phpcs:disable WordPress.Security.NonceVerification -- Routing only; each handler checks its own nonce.
 	if ( isset( $_POST['collections_manager_save'] ) ) {
 		collections_manager_save_collection();
 	}
 
 	if ( isset( $_GET['collections_manager_trash'] ) ) {
+		// phpcs:enable WordPress.Security.NonceVerification
 		collections_manager_trash_collection();
 	}
 }
@@ -246,7 +248,7 @@ function collections_manager_ajax_search_posts() {
 		$args['cm_title_search'] = $search;
 	}
 
-	$tax_query = collections_manager_picker_tax_query( $post_type, isset( $_GET['taxes'] ) ? wp_unslash( $_GET['taxes'] ) : '' );
+	$tax_query = collections_manager_picker_tax_query( $post_type, isset( $_GET['taxes'] ) ? sanitize_text_field( wp_unslash( $_GET['taxes'] ) ) : '' );
 	$highlight = array();
 	if ( $tax_query ) {
 		$args['tax_query'] = $tax_query;
@@ -489,7 +491,7 @@ function collections_manager_ajax_feed_preview() {
 	}
 
 	$feed   = array(
-		'url'           => isset( $_GET['url'] ) ? wp_unslash( $_GET['url'] ) : '',
+		'url'           => isset( $_GET['url'] ) ? esc_url_raw( wp_unslash( $_GET['url'] ) ) : '',
 		'kind'          => isset( $_GET['kind'] ) ? sanitize_key( wp_unslash( $_GET['kind'] ) ) : 'auto',
 		'rest_base'     => isset( $_GET['rest_base'] ) ? sanitize_key( wp_unslash( $_GET['rest_base'] ) ) : 'posts',
 		'category_id'   => isset( $_GET['category_id'] ) ? absint( wp_unslash( $_GET['category_id'] ) ) : 0,
@@ -515,6 +517,7 @@ function collections_manager_enqueue_dashboard_assets( $hook ) {
 		return;
 	}
 
+	// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Tab selection is navigation, not a form submission.
 	$tab = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'overview';
 
 	wp_enqueue_style(
@@ -606,9 +609,11 @@ function collections_manager_enqueue_dashboard_assets( $hook ) {
 			'i18n'      => array(
 				'noVideos'       => __( 'No videos found for that channel.', 'collections-manager' ),
 				'addChannel'     => __( 'Add a channel first.', 'collections-manager' ),
+				/* translators: %d: Number of videos found. */
 				'previewOk'      => __( 'Found %d videos. Newest first.', 'collections-manager' ),
 				'previewEmpty'   => __( 'No public videos found.', 'collections-manager' ),
 				'playlistsEmpty' => __( 'No public playlists on that channel. Paste a playlist URL instead.', 'collections-manager' ),
+				/* translators: %d: Number of feed items found. */
 				'feedOk'         => __( 'Found %d items.', 'collections-manager' ),
 				'feedEmpty'      => __( 'No items found at that URL.', 'collections-manager' ),
 				'feedRest'       => __( 'WordPress site detected. Choose a post type or category, then check the feed.', 'collections-manager' ),
@@ -720,6 +725,7 @@ function collections_manager_save_collection() {
 
 	check_admin_referer( 'collections_manager_save' );
 
+	// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Each field is sanitized individually below.
 	$input = isset( $_POST['collection'] ) ? wp_unslash( $_POST['collection'] ) : array();
 	$input = is_array( $input ) ? $input : array();
 
@@ -784,7 +790,7 @@ function collections_manager_save_collection() {
 }
 
 function collections_manager_trash_collection() {
-	$id = absint( wp_unslash( $_GET['collections_manager_trash'] ) );
+	$id = isset( $_GET['collections_manager_trash'] ) ? absint( wp_unslash( $_GET['collections_manager_trash'] ) ) : 0;
 	check_admin_referer( 'collections_manager_trash_' . $id );
 
 	if ( ! $id || ! current_user_can( 'delete_post', $id ) ) {
@@ -805,6 +811,7 @@ function collections_manager_render_dashboard_page() {
 		wp_die( esc_html__( 'Sorry, you are not allowed to access this page.', 'collections-manager' ) );
 	}
 
+	// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Tab selection is navigation, not a form submission.
 	$tab = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'overview';
 	if ( ! in_array( $tab, array( 'overview', 'collections', 'placements', 'styles', 'settings', 'how-to-use' ), true ) ) {
 		$tab = 'overview';
@@ -850,8 +857,10 @@ function collections_manager_render_dashboard_page() {
 }
 
 function collections_manager_render_notices() {
+	// phpcs:disable WordPress.Security.NonceVerification.Recommended -- Notice keys after a redirect; read-only and allowlisted.
 	$updated = isset( $_GET['updated'] ) ? sanitize_key( wp_unslash( $_GET['updated'] ) ) : '';
 	$error   = isset( $_GET['error'] ) ? sanitize_key( wp_unslash( $_GET['error'] ) ) : '';
+	// phpcs:enable WordPress.Security.NonceVerification.Recommended
 
 	$messages = array(
 		'saved'     => __( 'Collection saved.', 'collections-manager' ),

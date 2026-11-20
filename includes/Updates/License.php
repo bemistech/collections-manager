@@ -37,7 +37,7 @@ class License {
 		}
 		check_admin_referer( 'collections_manager_save_license' );
 
-		$key   = isset( $_POST['collections_manager_license_key'] ) && is_string( $_POST['collections_manager_license_key'] ) ? wp_unslash( $_POST['collections_manager_license_key'] ) : '';
+		$key   = isset( $_POST['collections_manager_license_key'] ) && is_string( $_POST['collections_manager_license_key'] ) ? sanitize_text_field( wp_unslash( $_POST['collections_manager_license_key'] ) ) : '';
 		$saved = self::save( $key, ! empty( $_POST['collections_manager_license_clear'] ) );
 		wp_safe_redirect(
 			add_query_arg(

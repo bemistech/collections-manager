@@ -137,7 +137,7 @@ class Placements {
 			return true;
 		}
 
-		$uri  = isset( $_SERVER['REQUEST_URI'] ) ? wp_unslash( $_SERVER['REQUEST_URI'] ) : '';
+		$uri  = isset( $_SERVER['REQUEST_URI'] ) ? esc_url_raw( wp_unslash( $_SERVER['REQUEST_URI'] ) ) : '';
 		$path = is_string( $uri ) ? wp_parse_url( $uri, PHP_URL_PATH ) : '';
 		$path = is_string( $path ) ? trim( $path, '/' ) : '';
 		if ( '' === $path ) {

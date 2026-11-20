@@ -6,7 +6,7 @@
  * Author URI: https://bemistech.com
  * License: GPLv2 or later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
- * Version: 0.2.11
+ * Version: 0.2.12
  * Text Domain: collections-manager
  * Update URI: https://updates.bemistech.com/collections-manager.json
  *
@@ -17,7 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'COLLECTIONS_MANAGER_VERSION', '0.2.11' );
+define( 'COLLECTIONS_MANAGER_VERSION', '0.2.12' );
 define( 'COLLECTIONS_MANAGER_FILE', __FILE__ );
 define( 'COLLECTIONS_MANAGER_PATH', plugin_dir_path( __FILE__ ) );
 define( 'COLLECTIONS_MANAGER_URL', plugin_dir_url( __FILE__ ) );
