@@ -51,6 +51,17 @@ if ( isset( $_GET['settings-updated'] ) ) { // phpcs:ignore WordPress.Security.N
 				</td>
 			</tr>
 			<tr>
+				<th scope="row"><label for="cm-style-mobile-ratio"><?php esc_html_e( 'Phone image shape', 'collections-manager' ); ?></label></th>
+				<td>
+					<select name="cm_styles[mobile_ratio]" id="cm-style-mobile-ratio" aria-describedby="cm-style-mobile-ratio-help">
+						<?php foreach ( \CollectionsManager\Styles\Repository::mobile_ratios() as $ratio_key => $ratio ) : ?>
+							<option value="<?php echo esc_attr( $ratio_key ); ?>" <?php selected( $styles['mobile_ratio'], $ratio_key ); ?>><?php echo esc_html( $ratio['label'] ); ?></option>
+						<?php endforeach; ?>
+					</select>
+					<p class="description" id="cm-style-mobile-ratio-help"><?php esc_html_e( 'Used on screens 781px wide and narrower. Portrait 4:5 crops landscape art the least while still filling the screen.', 'collections-manager' ); ?></p>
+				</td>
+			</tr>
+			<tr>
 				<th scope="row"><label for="cm-style-text-layout"><?php esc_html_e( 'Title and count', 'collections-manager' ); ?></label></th>
 				<td>
 					<select name="cm_styles[text_layout]" id="cm-style-text-layout">

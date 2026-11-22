@@ -634,7 +634,7 @@
 
 	.cm-browser__tab-cover,
 	.cm-browser__card-media {
-		aspect-ratio: 9 / 16;
+		aspect-ratio: var(--cm-ratio-mobile, 4 / 5);
 	}
 
 	.cm-browser--collection-text-overlay .cm-browser__tab-shade,
@@ -685,6 +685,15 @@
 		--cm-visible-mobile: 1.5;
 		--cm-cards-mobile: 1.5;
 		--cm-rail-visible: var(--cm-visible-mobile, 1.5);
+	}
+}
+
+/* Phones, landscape shape: wide images need wider cards so they don't become thin strips. Comes after the 480px rule so it wins there too. */
+@media (max-width: 781px) {
+	.wp-block-collections-manager-browser.cm-browser.cm-browser--phone-16-9,
+	.wp-block-collections-manager-browser.cm-browser.cm-browser--phone-16-9.is-open {
+		--cm-visible-mobile: 1.15;
+		--cm-cards-mobile: 1.15;
 	}
 }
 

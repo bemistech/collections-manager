@@ -7,6 +7,14 @@ import {
 	ToggleControl,
 } from '@wordpress/components';
 
+const PHONE_RATIOS = [
+	{ label: __( 'Portrait 4:5', 'collections-manager' ), value: '4-5' },
+	{ label: __( 'Square 1:1', 'collections-manager' ), value: '1-1' },
+	{ label: __( 'Tall 3:4', 'collections-manager' ), value: '3-4' },
+	{ label: __( 'Landscape 16:9', 'collections-manager' ), value: '16-9' },
+	{ label: __( 'Story 9:16', 'collections-manager' ), value: '9-16' },
+];
+
 const TEXT_POSITIONS = [
 	{ label: __( 'On the image', 'collections-manager' ), value: 'overlay' },
 	{ label: __( 'Above the image', 'collections-manager' ), value: 'above' },
@@ -29,6 +37,7 @@ export default function StyleControls( { attributes, setAttributes } ) {
 		collectionTextPosition,
 		cardTextPosition,
 		textLayout,
+		mobileAspectRatio,
 		titleFontSize,
 		countFontSize,
 		cardTitleFontSize,
@@ -56,6 +65,20 @@ export default function StyleControls( { attributes, setAttributes } ) {
 			</PanelBody>
 			{ useGlobalStyles === false && (
 				<>
+					<PanelBody title={ __( 'Images', 'collections-manager' ) } initialOpen={ true }>
+						<SelectControl
+							label={ __( 'Phone image shape', 'collections-manager' ) }
+							help={ __(
+								'Used on screens 781px wide and narrower. Portrait 4:5 crops landscape art the least while still filling the screen.',
+								'collections-manager'
+							) }
+							value={ mobileAspectRatio }
+							options={ PHONE_RATIOS }
+							onChange={ ( value ) =>
+								setAttributes( { mobileAspectRatio: value } )
+							}
+						/>
+					</PanelBody>
 					<PanelBody title={ __( 'Text', 'collections-manager' ) } initialOpen={ true }>
 						<SelectControl
 							label={ __( 'Collection title', 'collections-manager' ) }

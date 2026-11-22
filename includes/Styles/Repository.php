@@ -37,6 +37,7 @@ class Repository {
 			'collection_text_position' => 'overlay',
 			'card_text_position'       => 'overlay',
 			'text_layout'              => 'stack',
+			'mobile_ratio'             => '4-5',
 			'title_font_size'          => 18,
 			'count_font_size'          => 12,
 			'card_title_font_size'     => 15,
@@ -47,6 +48,21 @@ class Repository {
 			'panel_background'         => '',
 			'nav_background'           => '',
 			'nav_color'                => '',
+		);
+	}
+
+	/**
+	 * Image shapes offered for phones (781px wide and narrower).
+	 *
+	 * @return array<string, array{label:string,css:string}>
+	 */
+	public static function mobile_ratios() {
+		return array(
+			'4-5'  => array( 'label' => __( 'Portrait 4:5', 'collections-manager' ), 'css' => '4 / 5' ),
+			'1-1'  => array( 'label' => __( 'Square 1:1', 'collections-manager' ), 'css' => '1 / 1' ),
+			'3-4'  => array( 'label' => __( 'Tall 3:4', 'collections-manager' ), 'css' => '3 / 4' ),
+			'16-9' => array( 'label' => __( 'Landscape 16:9', 'collections-manager' ), 'css' => '16 / 9' ),
+			'9-16' => array( 'label' => __( 'Story 9:16', 'collections-manager' ), 'css' => '9 / 16' ),
 		);
 	}
 
@@ -177,6 +193,7 @@ class Repository {
 			'collection_text_position' => self::choice( $input['collection_text_position'] ?? '', array( 'overlay', 'above', 'below', 'beside' ), $defaults['collection_text_position'] ),
 			'card_text_position'       => self::choice( $input['card_text_position'] ?? '', array( 'overlay', 'above', 'below', 'beside' ), $defaults['card_text_position'] ),
 			'text_layout'              => self::choice( $input['text_layout'] ?? '', array( 'stack', 'row' ), $defaults['text_layout'] ),
+			'mobile_ratio'             => self::choice( $input['mobile_ratio'] ?? '', array_keys( self::mobile_ratios() ), $defaults['mobile_ratio'] ),
 			'title_font_size'          => max( 12, min( 40, (int) ( $input['title_font_size'] ?? $defaults['title_font_size'] ) ) ),
 			'count_font_size'          => max( 10, min( 24, (int) ( $input['count_font_size'] ?? $defaults['count_font_size'] ) ) ),
 			'card_title_font_size'     => max( 12, min( 32, (int) ( $input['card_title_font_size'] ?? $defaults['card_title_font_size'] ) ) ),
@@ -216,6 +233,7 @@ class Repository {
 				'collection_text_position' => $attributes['collectionTextPosition'] ?? '',
 				'card_text_position'       => $attributes['cardTextPosition'] ?? '',
 				'text_layout'              => $attributes['textLayout'] ?? '',
+				'mobile_ratio'             => $attributes['mobileAspectRatio'] ?? '',
 				'title_font_size'          => $attributes['titleFontSize'] ?? null,
 				'count_font_size'          => $attributes['countFontSize'] ?? null,
 				'card_title_font_size'     => $attributes['cardTitleFontSize'] ?? null,
@@ -256,6 +274,7 @@ class Repository {
 			'cm-browser--collection-text-' . $styles['collection_text_position'],
 			'cm-browser--card-text-' . $styles['card_text_position'],
 			'cm-browser--text-' . $styles['text_layout'],
+			'cm-browser--phone-' . $styles['mobile_ratio'],
 			$styles['show_shadow'] ? 'cm-browser--shadow' : 'cm-browser--no-shadow',
 		);
 
@@ -359,6 +378,7 @@ class Repository {
 			'--cm-panel-bg'        => $panel_bg,
 			'--cm-nav-bg'          => $nav_bg,
 			'--cm-nav-color'       => $nav_color,
+			'--cm-ratio-mobile'    => self::mobile_ratios()[ $styles['mobile_ratio'] ]['css'],
 		);
 
 		$parts = array();

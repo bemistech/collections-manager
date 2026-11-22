@@ -80,6 +80,11 @@
 			"type": "string",
 			"default": "stack"
 		},
+		"mobileAspectRatio": {
+			"type": "string",
+			"enum": [ "4-5", "1-1", "3-4", "16-9", "9-16" ],
+			"default": "4-5"
+		},
 		"titleFontSize": {
 			"type": "number",
 			"default": 18
